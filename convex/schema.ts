@@ -30,6 +30,7 @@ const applicationTables = {
     energy: v.number(),
     sleep: v.number(),
     notes: v.optional(v.string()),
+    timestamp: v.optional(v.number()),
   }).index("by_user", ["userId"]),
 
   alerts: defineTable({

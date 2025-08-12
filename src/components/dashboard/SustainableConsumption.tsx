@@ -37,7 +37,7 @@ export default function SustainableConsumption() {
   const [price, setPrice] = useState(0);
   const [inputMethod, setInputMethod] = useState<"manual" | "receipt">("manual");
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
-
+  const productNameRegex = /^[A-Za-z\s]+$/;
   // Calculate total footprints
   const totalFootprint = purchases.reduce(
     (acc, p) => {
@@ -161,43 +161,47 @@ export default function SustainableConsumption() {
 
       const purchasesExtracted: Purchase[] = [];
 
-      // Regex to parse: product name + optional qty + price at the end
-      // Example line: "Organic T-shirt 2 19.99" or "Bananas 3.49"
-      const purchaseLineRegex = /^(.+?)\s+(\d+)?\s*([\d.,]+)$/;
+      for (let i = 0; i < purchaseLines.length; i++) {
+        const line = purchaseLines[i].trim();
 
-      for (const line of purchaseLines) {
-        // Skip lines with keywords not part of purchases
-        if (/total|subtotal|tax|service|charge|cash|change|payment|thank/i.test(line.toLowerCase())) continue;
+        // Try to match product + optional qty + optional price on same line
+        const match = line.match(/^(.+?)(?:\s+(\d+))?(?:\s+([\d.,]+))?$/);
 
-        const match = line.match(purchaseLineRegex);
-        if (!match) continue;
+        if (match) {
+          const productName = match[1].trim();
+          let quantity = match[2] ? parseInt(match[2], 10) : 1;
+          let price = match[3] ? parseFloat(match[3].replace(",", ".")) : 0;
 
-        let [, productName, qtyStr, priceStr] = match;
-        let quantity = qtyStr ? parseInt(qtyStr) : 1;
-        if (isNaN(quantity) || quantity <= 0) quantity = 1;
+          // If no price detected, try next line (maybe price on next line)
+          if (!price && i + 1 < purchaseLines.length) {
+            const nextLine = purchaseLines[i + 1].trim();
+            const nextPrice = parseFloat(nextLine.replace(",", "."));
+            if (!isNaN(nextPrice)) {
+              price = nextPrice;
+              i++; // consume next line as price
+            }
+          }
 
-        const price = parseFloat(priceStr.replace(",", "."));
-        if (isNaN(price) || price <= 0) continue;
+          // Validate product name (allowing more chars here because OCR can be noisy)
+          if (productName.length > 1) {
+            // Assign default category or improve category detection if you want
+            const category: Category = "Groceries";
+            const footprintPerUnit = footprintData[category];
 
-        productName = productName.trim();
-        if (!productName || productName.length < 2) continue;
-
-        // Default category (you can improve with a lookup)
-        const category: Category = "Groceries";
-        const footprintPerUnit = footprintData[category];
-
-        purchasesExtracted.push({
-          id: purchases.length + purchasesExtracted.length + 1,
-          product: productName,
-          category,
-          quantity,
-          price,
-          footprint: {
-            co2: footprintPerUnit.co2 * quantity,
-            plastic: footprintPerUnit.plastic * quantity,
-            water: footprintPerUnit.water * quantity,
-          },
-        });
+            purchasesExtracted.push({
+              id: purchases.length + purchasesExtracted.length + 1,
+              product: productName,
+              category,
+              quantity,
+              price,
+              footprint: {
+                co2: footprintPerUnit.co2 * quantity,
+                plastic: footprintPerUnit.plastic * quantity,
+                water: footprintPerUnit.water * quantity,
+              },
+            });
+          }
+        }
       }
 
       if (purchasesExtracted.length > 0) {

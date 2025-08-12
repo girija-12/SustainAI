@@ -73,6 +73,7 @@ export const addWellbeingCheckin = mutation({
     energy: v.number(),
     sleep: v.number(),
     notes: v.optional(v.string()),
+    timestamp: v.optional(v.number()),  // Add this line
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);

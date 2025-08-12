@@ -43,12 +43,22 @@ const applicationTables = {
 
   // schema.ts
   purchases: defineTable({
+    userId: v.id("users"),
     productName: v.string(),
     category: v.string(),
+    quantity: v.number(),
     price: v.number(),
     impactScore: v.number(),
-    date: v.string(), // ISO date string
-  }),
+    footprint: v.object({
+      co2: v.number(),
+      plastic: v.number(),
+      water: v.number(),
+    }),
+    timestamp: v.number(), // Unix timestamp
+    date: v.string(), // ISO date string for display
+  }).index("by_user", ["userId"])
+    .index("by_category", ["category"])
+    .index("by_date", ["timestamp"]),
 
 };
 

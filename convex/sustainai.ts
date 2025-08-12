@@ -97,6 +97,7 @@ export const getActiveAlerts = query({
 });
 
 // Add a purchase
+// Add a purchase
 export const addPurchase = mutation({
   args: {
     productName: v.string(),
@@ -104,9 +105,16 @@ export const addPurchase = mutation({
     price: v.number(),
     impactScore: v.number(),
     date: v.string(),
+    receiptImage: v.optional(v.string()), // Add this line to accept the receipt image
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("purchases", args);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    // Insert the purchase into the database
+    return await ctx.db.insert("purchases", {
+      ...args,
+    });
   },
 });
 

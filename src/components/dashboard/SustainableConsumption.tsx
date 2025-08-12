@@ -1,5 +1,8 @@
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import ChatWidget from "../shared/ChatWidget";
+import { useMutation, useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api"; // adjust path as per your setup
+
 
 type Category = | "Groceries" | "Apparel" | "Electronics" | "Furniture" | "Beauty" | "Toys" | "Books";
 
@@ -46,13 +49,37 @@ export default function SustainableConsumption() {
     { co2: 0, plastic: 0, water: 0 }
   );
 
+  const backendPurchases = useQuery(api.sustainai.listPurchases);
+  const addPurchaseMutation = useMutation(api.sustainai.addPurchase);
+
+  // Sync backend purchases to local state on load
+  useEffect(() => {
+    if (backendPurchases) {
+      // Map backend purchases to your frontend Purchase type, if necessary
+      setPurchases(
+        backendPurchases.map((p: any, index: number) => ({
+          id: index + 1,
+          product: p.productName,
+          category: p.category as Category,
+          quantity: 1, // You can store quantity in backend if desired, else default 1
+          price: p.price,
+          footprint: {
+            co2: footprintData[p.category as Category].co2,
+            plastic: footprintData[p.category as Category].plastic,
+            water: footprintData[p.category as Category].water,
+          },
+        }))
+      );
+    }
+  }, [backendPurchases]);
+
   // Simple sustainability score based on footprint (lower footprint = higher score)
   const sustainabilityScore = Math.max(
     0,
     Math.min(100, 100 - totalFootprint.co2 * 3)
   );
 
-  const addPurchase = () => {
+  const addPurchase = async () => {
     if (!product || quantity <= 0 || price <= 0) return alert("Please fill all fields");
 
     const footprintPerUnit = footprintData[category];
@@ -69,40 +96,137 @@ export default function SustainableConsumption() {
       },
     };
 
-    setPurchases([...purchases, newPurchase]);
+    try {
+      // Call backend mutation
+      await addPurchaseMutation({
+        productName: product,
+        category,
+        price,
+        impactScore: footprintPerUnit.co2 * quantity, // example: use CO2 as impact score
+        date: new Date().toISOString(),
+      });
 
-    // Reset form
-    setProduct("");
-    setQuantity(1);
-    setPrice(0);
+      // Update local state
+      setPurchases([...purchases, newPurchase]);
+
+      // Reset form
+      setProduct("");
+      setQuantity(1);
+      setPrice(0);
+    } catch (err) {
+      alert("Failed to add purchase: " + (err as Error).message);
+    }
   };
 
-  const handleReceiptUpload = (file: File | null) => {
+  const handleReceiptUpload = async (file: File | null) => {
     if (!file) return;
 
     setIsProcessingReceipt(true);
-    console.log("Processing receipt:", file.name);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("language", "eng");
+      formData.append("isOverlayRequired", "false");
 
-    // Simulate receipt processing with timeout
-    setTimeout(() => {
-      // Mock data - in a real app, this would come from OCR/AI analysis
-      const mockPurchase: Purchase = {
-        id: purchases.length + 1,
-        product: "Receipt items",
-        category: "Groceries",
-        quantity: 5,
-        price: 42.99,
-        footprint: {
-          co2: 8.5,
-          plastic: 120,
-          water: 350,
+      const apiKey = import.meta.env.VITE_OCR_SPACE_API_KEY;
+
+      const response = await fetch("https://api.ocr.space/parse/image", {
+        method: "POST",
+        headers: {
+          apikey: apiKey as string,
         },
-      };
+        body: formData,
+      });
 
-      setPurchases([...purchases, mockPurchase]);
+      const data = await response.json();
+      if (!data.ParsedResults || !data.ParsedResults[0]) {
+        throw new Error("No text found in receipt.");
+      }
+      const text = data.ParsedResults[0].ParsedText;
+      console.log("OCR Parsed Text:", text);
+
+      // Split lines, trim, remove empty lines
+      const lines = text.split("\n").map((l: string) => l.trim()).filter(Boolean);
+
+      // Define keywords to detect purchase section boundaries
+      const startIndex = lines.findIndex((line: string) => /qty|quantity|product|item|description|price/i.test(line));
+      const endIndex = lines.findIndex((line: string, idx: number) => idx > startIndex && /total|subtotal|tax|amount due|payment/i.test(line));
+
+      // Extract purchase-related lines only
+      const purchaseLines =
+        startIndex !== -1 && endIndex !== -1 && endIndex > startIndex
+          ? lines.slice(startIndex + 1, endIndex)
+          : lines; // fallback to all lines if no boundaries found
+      console.log("Extracted Purchase Lines:", purchaseLines);
+
+      const purchasesExtracted: Purchase[] = [];
+
+      // Regex to parse: product name + optional qty + price at the end
+      // Example line: "Organic T-shirt 2 19.99" or "Bananas 3.49"
+      const purchaseLineRegex = /^(.+?)\s+(\d+)?\s*([\d.,]+)$/;
+
+      for (const line of purchaseLines) {
+        // Skip lines with keywords not part of purchases
+        if (/total|subtotal|tax|service|charge|cash|change|payment|thank/i.test(line.toLowerCase())) continue;
+
+        const match = line.match(purchaseLineRegex);
+        if (!match) continue;
+
+        let [, productName, qtyStr, priceStr] = match;
+        let quantity = qtyStr ? parseInt(qtyStr) : 1;
+        if (isNaN(quantity) || quantity <= 0) quantity = 1;
+
+        const price = parseFloat(priceStr.replace(",", "."));
+        if (isNaN(price) || price <= 0) continue;
+
+        productName = productName.trim();
+        if (!productName || productName.length < 2) continue;
+
+        // Default category (you can improve with a lookup)
+        const category: Category = "Groceries";
+        const footprintPerUnit = footprintData[category];
+
+        purchasesExtracted.push({
+          id: purchases.length + purchasesExtracted.length + 1,
+          product: productName,
+          category,
+          quantity,
+          price,
+          footprint: {
+            co2: footprintPerUnit.co2 * quantity,
+            plastic: footprintPerUnit.plastic * quantity,
+            water: footprintPerUnit.water * quantity,
+          },
+        });
+      }
+
+      if (purchasesExtracted.length > 0) {
+        // Add to backend
+        for (const purchase of purchasesExtracted) {
+          try {
+            await addPurchaseMutation({
+              productName: purchase.product,
+              category: purchase.category,
+              price: purchase.price,
+              impactScore: purchase.footprint.co2,
+              date: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.error("Failed to save purchase from receipt", e);
+          }
+        }
+
+        setPurchases((prev) => [...prev, ...purchasesExtracted]);
+        alert(`Receipt processed successfully! Added ${purchasesExtracted.length} purchase(s).`);
+      } else {
+        alert("Receipt processed, but no valid purchase found. Please enter manually.");
+      }
+
       setIsProcessingReceipt(false);
-      alert("Receipt processed successfully! Added estimated footprint data.");
-    }, 2000);
+    } catch (err: any) {
+      setIsProcessingReceipt(false);
+      alert("Error processing receipt: " + (err.message || err));
+    }
   };
 
   return (
@@ -178,8 +302,8 @@ export default function SustainableConsumption() {
           <div className="flex border rounded-lg overflow-hidden mb-6">
             <button
               className={`flex-1 py-2 px-4 transition ${inputMethod === "manual"
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-100 hover:bg-gray-200"
+                ? "bg-green-600 text-white"
+                : "bg-gray-100 hover:bg-gray-200"
                 }`}
               onClick={() => setInputMethod("manual")}
             >
@@ -187,8 +311,8 @@ export default function SustainableConsumption() {
             </button>
             <button
               className={`flex-1 py-2 px-4 transition ${inputMethod === "receipt"
-                  ? "bg-green-600 text-white"
-                  : "bg-gray-100 hover:bg-gray-200"
+                ? "bg-green-600 text-white"
+                : "bg-gray-100 hover:bg-gray-200"
                 }`}
               onClick={() => setInputMethod("receipt")}
             >

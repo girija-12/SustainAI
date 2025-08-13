@@ -239,6 +239,7 @@ export default function SustainableConsumption() {
           water: footprintPerUnit.water * quantity,
         },
         date: new Date().toISOString(),
+        receiptImage: undefined, // No receipt image for manual entry
       });
 
       // Don't update local state - let the backend sync handle it
@@ -517,6 +518,7 @@ export default function SustainableConsumption() {
               impactScore: purchase.footprint.co2,
               footprint: purchase.footprint,
               date: new Date().toISOString(),
+              receiptImage: undefined, // Could be enhanced to store receipt image
             });
           } catch (e) {
             console.error("Failed to save purchase from receipt", e);

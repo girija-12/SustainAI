@@ -56,6 +56,7 @@ const applicationTables = {
     }),
     timestamp: v.number(), // Unix timestamp
     date: v.string(), // ISO date string for display
+    receiptImage: v.optional(v.string()), // Optional receipt image URL/path
   }).index("by_user", ["userId"])
     .index("by_category", ["category"])
     .index("by_date", ["timestamp"]),

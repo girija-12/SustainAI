@@ -11,6 +11,8 @@ interface ChatWidgetProps {
   messages: Message[];
   placeholder: string;
   bgColor: string;
+  onSendMessage?: (message: string) => void;
+  isLoading?: boolean;
 }
 
 export default function ChatWidget({ 
@@ -18,25 +20,18 @@ export default function ChatWidget({
   agentDescription, 
   messages, 
   placeholder, 
-  bgColor 
+  bgColor,
+  onSendMessage,
+  isLoading = false
 }: ChatWidgetProps) {
   const [inputValue, setInputValue] = useState('');
-  const [chatMessages, setChatMessages] = useState<Message[]>(messages);
 
   const handleSendMessage = () => {
-    if (inputValue.trim()) {
-      const newMessage: Message = { role: 'user', content: inputValue };
-      setChatMessages([...chatMessages, newMessage]);
+    if (inputValue.trim() && !isLoading) {
+      if (onSendMessage) {
+        onSendMessage(inputValue);
+      }
       setInputValue('');
-      
-      // Simulate AI response
-      setTimeout(() => {
-        const aiResponse: Message = { 
-          role: 'assistant', 
-          content: 'Thank you for your message. I\'m processing your request and will provide insights based on the available data.' 
-        };
-        setChatMessages(prev => [...prev, aiResponse]);
-      }, 1000);
     }
   };
 
@@ -68,17 +63,29 @@ export default function ChatWidget({
       {/* Chat Messages */}
       <div className="p-4 max-h-96 overflow-y-auto">
         <div className="space-y-4">
-          {chatMessages.map((message, index) => (
+          {messages.map((message, index) => (
             <div key={index} className={`${message.role === 'user' ? 'text-right' : 'text-left'}`}>
               <div className={`inline-block p-3 rounded-lg max-w-xs ${
                 message.role === 'user' 
                   ? 'bg-blue-500 text-white' 
                   : 'bg-gray-100 text-gray-800'
               }`}>
-                {message.content}
+                <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                  {message.content}
+                </div>
               </div>
             </div>
           ))}
+          {isLoading && (
+            <div className="text-left">
+              <div className="inline-block p-3 rounded-lg bg-gray-100 text-gray-800">
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-emerald-500"></div>
+                  <span className="text-sm">EcoVest is thinking...</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -95,9 +102,10 @@ export default function ChatWidget({
           />
           <button
             onClick={handleSendMessage}
-            className="px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            disabled={isLoading || !inputValue.trim()}
+            className="px-4 py-3 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Send
+            {isLoading ? 'Sending...' : 'Send'}
           </button>
         </div>
       </div>

@@ -1,8 +1,7 @@
-import { ChangeEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState, useMemo } from "react";
 import ChatWidget from "../shared/ChatWidget";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api"; // adjust path as per your setup
-
 
 type Category = | "Groceries" | "Apparel" | "Electronics" | "Furniture" | "Beauty" | "Toys" | "Books";
 
@@ -119,7 +118,8 @@ export default function SustainableConsumption() {
   const [filterDateRange, setFilterDateRange] = useState<"all" | "today" | "week" | "month">("all");
   const [searchTerm, setSearchTerm] = useState("");
   
-  const productNameRegex = /^[A-Za-z\s]+$/;
+  // Allow letters, numbers, spaces, dashes and common symbols so users can type things like "iPhone 15 Pro - 256GB"
+  const productNameRegex = /^[A-Za-z0-9\s\-+&()'.,\/]*$/;
   // Calculate total footprints
   const totalFootprint = purchases.reduce(
     (acc, p) => {
@@ -161,11 +161,24 @@ export default function SustainableConsumption() {
     }
   };
 
-  const dateRange = getDateRange();
-  const backendPurchases = useQuery(api.sustainai.listPurchases, {
-    category: filterCategory === "All" ? undefined : filterCategory,
-    ...dateRange,
-  });
+  const dateRange = useMemo(() => getDateRange(), [filterDateRange]);
+  // Build query args without undefined keys to avoid validator issues when switching filters
+  const queryArgs = useMemo(() => {
+    const args: { category?: Category; startDate?: number; endDate?: number } = {};
+    if (filterCategory !== "All") {
+      args.category = filterCategory as Category;
+    }
+    if (filterDateRange !== "all") {
+      const { startDate, endDate } = dateRange as { startDate?: number; endDate?: number };
+      if (typeof startDate === "number" && typeof endDate === "number") {
+        args.startDate = startDate;
+        args.endDate = endDate;
+      }
+    }
+    return args;
+  }, [filterCategory, filterDateRange, dateRange]);
+
+  const backendPurchases = useQuery(api.sustainai.listPurchases, queryArgs);
   const addPurchaseMutation = useMutation(api.sustainai.addPurchase);
   const deletePurchaseMutation = useMutation(api.sustainai.deletePurchase);
   const deleteAllPurchasesMutation = useMutation(api.sustainai.deleteAllPurchases);
@@ -204,6 +217,412 @@ export default function SustainableConsumption() {
     0,
     Math.min(100, 100 - totalFootprint.co2 * 3)
   );
+
+  // Types for recommendations
+  type AlternativeSuggestion = {
+    key: string;
+    title: string;
+    details: string;
+    estimatedReduction: number; // 0..1 (percentage reduction)
+    tag: string;
+    basedOnProduct: string;
+    category: Category;
+  };
+
+  // Generate alternatives for a single purchase based on simple heuristics
+  const generateAlternativesForPurchase = (p: Purchase): AlternativeSuggestion[] => {
+    const name = p.product.toLowerCase();
+    const recs: AlternativeSuggestion[] = [];
+
+    switch (p.category) {
+      case "Groceries": {
+        if (/(beef|mutton|pork|lamb|steak|meatball|bacon)/.test(name)) {
+          recs.push({
+            key: "plant-protein-red-meat",
+            title: "Plant-based proteins (tofu, beans, lentils)",
+            details: "Red meat has a high carbon footprint. Swap with legumes or tofu in similar recipes.",
+            estimatedReduction: 0.6,
+            tag: "Food choice",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        if (/(chicken|fish|salmon|tuna)/.test(name)) {
+          recs.push({
+            key: "plant-protein-poultry-fish",
+            title: "More plant-based meals or certified sustainable fish",
+            details: "Shift a few meals per week to plant-based options or choose MSC-certified fish.",
+            estimatedReduction: 0.4,
+            tag: "Food choice",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        if (/(milk|cheese|butter|yogurt|dairy)/.test(name)) {
+          recs.push({
+            key: "plant-dairy",
+            title: "Switch to plant-based dairy (oat/soy)",
+            details: "Plant-based milks and yogurts generally have lower emissions and water use.",
+            estimatedReduction: 0.4,
+            tag: "Dairy swap",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        if (/(bottled water|bottle water|soda|soft drink)/.test(name) || /water/.test(name)) {
+          recs.push({
+            key: "reusable-bottle",
+            title: "Use a reusable bottle + filtered tap water",
+            details: "Avoid single-use bottles and reduce plastic waste substantially.",
+            estimatedReduction: 0.9,
+            tag: "Packaging",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        // Generic grocery advice
+        recs.push({
+          key: "local-seasonal-organic",
+          title: "Favor local, seasonal, organic options",
+          details: "These choices can lower transport emissions and support better farming practices.",
+          estimatedReduction: 0.15,
+          tag: "Groceries",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Apparel": {
+        if (/(polyester|nylon|acrylic)/.test(name)) {
+          recs.push({
+            key: "natural-fibers",
+            title: "Choose natural fibers (organic cotton, hemp, linen)",
+            details: "Natural, certified fibers often have lower microplastic shedding and better lifecycle impacts.",
+            estimatedReduction: 0.3,
+            tag: "Materials",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        if (/leather/.test(name)) {
+          recs.push({
+            key: "leather-alt",
+            title: "Consider plant-based or recycled leather alternatives",
+            details: "Alternatives and second-hand leather can reduce emissions and water use.",
+            estimatedReduction: 0.4,
+            tag: "Materials",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        recs.push({
+          key: "buy-less-better",
+          title: "Buy less, choose quality or second-hand",
+          details: "Extending garment life by 9 months can reduce its footprint 20–30%.",
+          estimatedReduction: 0.25,
+          tag: "Behavior",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Electronics": {
+        if (/(tv|monitor|laptop|computer|desktop)/.test(name)) {
+          recs.push({
+            key: "energy-star",
+            title: "Energy Star or highly efficient devices",
+            details: "Efficient models reduce electricity demand over the device lifetime.",
+            estimatedReduction: 0.2,
+            tag: "Efficiency",
+            basedOnProduct: p.product,
+            category: p.category,
+          });
+        }
+        recs.push({
+          key: "repair-refurbish",
+          title: "Repair or buy refurbished where possible",
+          details: "Keeps devices in use longer and avoids new manufacturing impacts.",
+          estimatedReduction: 0.3,
+          tag: "Circular",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Furniture": {
+        recs.push({
+          key: "fsc-reclaimed",
+          title: "FSC-certified wood or reclaimed materials",
+          details: "Supports sustainable forestry and reduces demand for virgin materials.",
+          estimatedReduction: 0.25,
+          tag: "Materials",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        recs.push({
+          key: "second-hand-furniture",
+          title: "Prefer second-hand or refurbished pieces",
+          details: "Lowers manufacturing impacts and extends product life.",
+          estimatedReduction: 0.5,
+          tag: "Circular",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Beauty": {
+        recs.push({
+          key: "refillable-solid",
+          title: "Refillable packaging or solid bars",
+          details: "Reduces plastic packaging and shipping weight.",
+          estimatedReduction: 0.4,
+          tag: "Packaging",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Toys": {
+        recs.push({
+          key: "wooden-battery-free",
+          title: "Wooden, battery-free, or second-hand toys",
+          details: "Cuts plastic use and extends toy lifespan.",
+          estimatedReduction: 0.35,
+          tag: "Materials",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+      case "Books": {
+        recs.push({
+          key: "ebooks-library",
+          title: "E-books or library borrowing",
+          details: "Avoids new paper production and shipping for each title.",
+          estimatedReduction: 0.6,
+          tag: "Access",
+          basedOnProduct: p.product,
+          category: p.category,
+        });
+        break;
+      }
+    }
+
+    return recs;
+  };
+
+  // Build personalized recommendations from purchases (behavioral/strategy tips)
+  const recommendations = useMemo(() => {
+    type Scored = AlternativeSuggestion & { score: number };
+    const map = new Map<string, Scored>();
+
+    for (const p of purchases) {
+      const recs = generateAlternativesForPurchase(p);
+      for (const r of recs) {
+        const score = (p.footprint?.co2 || 0) * r.estimatedReduction;
+        const existing = map.get(r.key);
+        if (!existing || score > existing.score) {
+          map.set(r.key, { ...r, basedOnProduct: p.product, score });
+        }
+      }
+    }
+
+    const list = Array.from(map.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6)
+      .map(({ score, ...rest }) => rest);
+
+    return list;
+  }, [purchases]);
+
+  // Sustainable alternative products: suggest concrete items by category, weighted by spend
+  type ProductAlt = {
+    id: string;
+    name: string;
+    description: string;
+    badge: string;
+    estImpactLabel: string; // e.g., "Lower CO₂"
+    category: Category;
+  };
+
+  // Static catalog of sustainable-leaning products (can later be fetched from backend/API)
+  const sustainableCatalog: Record<Category, ProductAlt[]> = {
+    Groceries: [
+      { id: "gro-1", name: "Organic seasonal veg box", description: "Local, seasonal produce reduces transport emissions.", badge: "Local/Seasonal", estImpactLabel: "Lower CO₂", category: "Groceries" },
+      { id: "gro-2", name: "Tofu (organic soy)", description: "High-protein plant alternative to meat.", badge: "Plant-based", estImpactLabel: "-60% vs red meat", category: "Groceries" },
+      { id: "gro-3", name: "Oat milk", description: "Lower water and CO₂ footprint than dairy.", badge: "Plant-based", estImpactLabel: "Lower water & CO₂", category: "Groceries" },
+    ],
+    Apparel: [
+      { id: "app-1", name: "Organic cotton T-shirt", description: "Certified organic cotton, responsibly made.", badge: "Organic", estImpactLabel: "Fewer pesticides", category: "Apparel" },
+      { id: "app-2", name: "Hemp shirt", description: "Durable natural fiber with lower inputs.", badge: "Natural fiber", estImpactLabel: "Lower impact", category: "Apparel" },
+      { id: "app-3", name: "Second-hand denim", description: "Circular choice that extends product life.", badge: "Second-hand", estImpactLabel: "Avoids new production", category: "Apparel" },
+    ],
+    Electronics: [
+      { id: "ele-1", name: "Refurbished laptop (certified)", description: "Quality-checked device with warranty.", badge: "Refurbished", estImpactLabel: "Avoids new manufacturing", category: "Electronics" },
+      { id: "ele-2", name: "Energy Star monitor", description: "Efficient display reduces electricity use.", badge: "Energy efficient", estImpactLabel: "Lower energy", category: "Electronics" },
+    ],
+    Furniture: [
+      { id: "fur-1", name: "FSC-certified wooden table", description: "Sustainably sourced wood.", badge: "FSC", estImpactLabel: "Responsible forestry", category: "Furniture" },
+      { id: "fur-2", name: "Reclaimed wood shelf", description: "Upcycled materials, unique look.", badge: "Reclaimed", estImpactLabel: "Lower material footprint", category: "Furniture" },
+    ],
+    Beauty: [
+      { id: "bea-1", name: "Refillable shampoo", description: "Keep the bottle, refill the contents.", badge: "Refillable", estImpactLabel: "Less plastic", category: "Beauty" },
+      { id: "bea-2", name: "Solid soap bar", description: "Package-free cleansing.", badge: "Low-waste", estImpactLabel: "Less plastic", category: "Beauty" },
+    ],
+    Toys: [
+      { id: "toy-1", name: "Wooden blocks", description: "Durable, plastic-free play.", badge: "Plastic-free", estImpactLabel: "Lower plastic", category: "Toys" },
+      { id: "toy-2", name: "Second-hand board game", description: "Give games a second life.", badge: "Second-hand", estImpactLabel: "Circular choice", category: "Toys" },
+    ],
+    Books: [
+      { id: "boo-1", name: "E-book of latest read", description: "Digital format avoids paper per copy.", badge: "Digital", estImpactLabel: "Lower materials", category: "Books" },
+      { id: "boo-2", name: "Library borrow", description: "Shared copies reduce new printing demand.", badge: "Shared", estImpactLabel: "Avoids new printing", category: "Books" },
+    ],
+  };
+  // Compute spend per category to prioritize product alternatives
+  const categorySpend = useMemo(() => {
+    const totals = new Map<Category, number>();
+    for (const p of purchases) {
+      totals.set(p.category, (totals.get(p.category) || 0) + p.price * p.quantity);
+    }
+    return totals;
+  }, [purchases]);
+
+  // --- OpenAI-driven personalized product alternatives ---
+  const OPENAI_KEY = import.meta.env.VITE_SUSTAINABILITY_OPENAI_API_KEY as string | undefined;
+  const [aiProductAlternatives, setAiProductAlternatives] = useState<ProductAlt[] | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  // Build a compact purchase summary for the prompt
+  const purchaseSummary = useMemo(() => {
+    return purchases.map((p) => ({
+      product: p.product,
+      category: p.category,
+      quantity: p.quantity,
+      price: p.price,
+      co2: p.footprint.co2,
+    }));
+  }, [purchases]);
+
+  // Fetch recommendations from OpenAI (chat completions), expect a strict JSON array
+  const fetchAIRecommendations = async () => {
+    if (!OPENAI_KEY) {
+      setAiError('OpenAI API key not found in environment (VITE_SUSTAINABILITY_OPENAI_API_KEY)');
+      setAiProductAlternatives(null);
+      return;
+    }
+
+    if (!purchases || purchases.length === 0) {
+      setAiProductAlternatives(null);
+      return;
+    }
+
+    setAiLoading(true);
+    setAiError(null);
+
+    try {
+      // Build prompt: include top spent categories and recent purchases
+      const topCategories = Array.from(categorySpend.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat]) => cat)
+        .slice(0, 3);
+
+      const system = `You are GreenAdvisor, an assistant that suggests 3-6 concrete sustainable product alternatives tailored to a user's recent purchases. Return ONLY a JSON array of objects (no surrounding text). Each object must have these keys: id (short unique string), name, description, badge, estImpactLabel (short human-readable impact), category (one of Groceries|Apparel|Electronics|Furniture|Beauty|Toys|Books).`; 
+
+      const user = `Top categories by spend: ${topCategories.join(', ') || 'none'}.\nRecent purchases: ${JSON.stringify(purchaseSummary)}.\nReturn 4-8 alternative products prioritized by the user's top categories. Be concise and ensure valid JSON output.`;
+
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          max_tokens: 600,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`OpenAI request failed: ${resp.status} ${errText}`);
+      }
+
+      const json = await resp.json();
+      const content = json?.choices?.[0]?.message?.content;
+      if (!content) throw new Error('No content in OpenAI response');
+
+      // Try to locate JSON inside the response content
+      let parsed: ProductAlt[] | null = null;
+      try {
+        // Sometimes the model wraps JSON in markdown or backticks; strip them
+        const cleaned = content.trim().replace(/^```json\n?|\n?```$/g, '').trim();
+        parsed = JSON.parse(cleaned);
+      } catch (e) {
+        // Attempt a more lenient extraction of the first JSON array in the text
+        const match = content.match(/\[\s*\{[\s\S]*\}\s*\]/);
+        if (match) {
+          parsed = JSON.parse(match[0]);
+        } else {
+          throw e;
+        }
+      }
+
+      // Basic validation and normalization
+      if (!Array.isArray(parsed)) throw new Error('OpenAI returned unexpected JSON format');
+
+      const normalized: ProductAlt[] = parsed.map((it: any, idx: number) => ({
+        id: it.id || `ai-${Date.now()}-${idx}`,
+        name: it.name || it.title || 'Unnamed product',
+        description: it.description || it.details || '',
+        badge: it.badge || it.tag || '',
+        estImpactLabel: it.estImpactLabel || it.impact || '',
+        category: (it.category || 'Groceries') as Category,
+      }));
+
+      setAiProductAlternatives(normalized);
+    } catch (err: any) {
+      console.error('AI recommendation error', err);
+      setAiError(err?.message || String(err));
+      setAiProductAlternatives(null);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Trigger AI recommendations when purchases change (debounced-ish)
+  useEffect(() => {
+    // Debounce short bursts of updates
+    const t = setTimeout(() => {
+      fetchAIRecommendations();
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [purchases]);
+
+  // Pick top categories by spend, then recommend 2-3 products per top category
+  // Use AI results when available, otherwise fall back to static catalog
+  const productAlternatives = useMemo(() => {
+    if (aiProductAlternatives && aiProductAlternatives.length > 0) return aiProductAlternatives;
+
+    const ranked = Array.from(categorySpend.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat]) => cat)
+      .slice(0, 3);
+
+    const items: ProductAlt[] = [];
+    for (const cat of ranked) {
+      const pool = sustainableCatalog[cat] || [];
+      // take top 2 per category to keep list concise
+      items.push(...pool.slice(0, 2));
+    }
+    return items;
+  }, [categorySpend, aiProductAlternatives]);
 
   const addPurchase = async () => {
     if (!product || quantity <= 0 || price <= 0) return alert("Please fill all fields");
@@ -637,25 +1056,40 @@ export default function SustainableConsumption() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product Name
                 </label>
-                <input
-                  type="text"
-                  className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
-                  value={product}
-                  onChange={(e) => {
-                    const newProduct = e.target.value;
-                    setProduct(newProduct);
-                    
-                    // Auto-apply recommended category if user hasn't manually overridden
-                    if (!isManualCategoryOverride && newProduct.trim()) {
-                      const recommendedCategory = detectCategory(newProduct);
-                      setCategory(recommendedCategory);
-                    }
-                  }}
-                  placeholder="e.g., Organic T-shirt, iPhone 15, Nike Shoes"
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    className="w-full p-3 pr-10 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                    value={product}
+                    onChange={(e) => {
+                      const newProduct = e.target.value;
+                      // Soft-validate only (no blocking). Trim very long names.
+                      const cleaned = newProduct.slice(0, 80);
+                      setProduct(cleaned);
+                      
+                      // Auto-apply recommended category if user hasn't manually overridden
+                      if (!isManualCategoryOverride && cleaned.trim()) {
+                        const recommendedCategory = detectCategory(cleaned);
+                        setCategory(recommendedCategory);
+                      }
+                    }}
+                    placeholder="e.g., Organic cotton tee, iPhone 15, Running Shoes"
+                  />
+                  {/* Inline clear button */}
+                  {product && (
+                    <button
+                      type="button"
+                      onClick={() => setProduct("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      aria-label="Clear product name"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
                 {product && (
-                  <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="flex items-center justify-between">
+                  <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm text-green-700">
                         💡 <strong>Recommended category:</strong> <span className="font-semibold text-green-800">{detectCategory(product)}</span>
                       </div>
@@ -691,7 +1125,7 @@ export default function SustainableConsumption() {
                     setCategory(e.target.value as Category);
                     setIsManualCategoryOverride(true); // Mark as manual override
                   }}
-                  className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
+                  className="w-full p-3 border rounded-lg focus:ring-green-500 focus:border-green-500 bg-white"
                 >
                   <option value="Groceries">Groceries</option>
                   <option value="Apparel">Apparel</option>
@@ -709,35 +1143,42 @@ export default function SustainableConsumption() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Quantity
                   </label>
-                  <input
-                    type="number"
-                    className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
-                    value={quantity}
-                    min={1}
-                    onChange={(e) => setQuantity(Number(e.target.value))}
-                  />
+                  <div className="relative">
+                    <input
+                      type="number"
+                      className="w-full p-3 pr-10 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                      value={quantity}
+                      min={1}
+                      onChange={(e) => setQuantity(Number(e.target.value))}
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">pcs</span>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Price ($)
                   </label>
-                  <input
-                    type="number"
-                    className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
-                    value={price}
-                    min={0}
-                    step={0.01}
-                    onChange={(e) => setPrice(Number(e.target.value))}
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      className="w-full pl-7 p-3 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                      value={price}
+                      min={0}
+                      step={0.01}
+                      onChange={(e) => setPrice(Number(e.target.value))}
+                    />
+                  </div>
                 </div>
               </div>
 
               {/* Add Button */}
               <button
-                className="w-full px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition disabled:bg-gray-300"
+                className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition disabled:bg-gray-300 flex items-center justify-center gap-2"
                 disabled={!product || quantity <= 0 || price <= 0}
                 onClick={addPurchase}
               >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
                 Add Purchase
               </button>
             </div>
@@ -797,6 +1238,47 @@ export default function SustainableConsumption() {
 
         </div>
 
+        {recommendations.length > 0 && (
+          <div className="bg-white rounded-2xl p-6 shadow-lg">
+            <h3 className="text-xl font-semibold mb-4">Sustainable Alternatives (Tips)</h3>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {recommendations.map((r) => (
+                <div key={r.key} className="border rounded-xl p-4 bg-green-50/50">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{r.tag}</span>
+                    <span className="text-xs text-green-700">up to {Math.round(r.estimatedReduction * 100)}% lower CO₂</span>
+                  </div>
+                  <div className="font-medium text-green-900">{r.title}</div>
+                  <p className="text-sm text-gray-700 mt-1">{r.details}</p>
+                  <p className="text-xs text-gray-500 mt-2">Based on: <span className="font-medium">{r.basedOnProduct}</span> ({r.category})</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {productAlternatives.length > 0 && (
+          <div className="bg-white rounded-2xl p-6 shadow-lg">
+            <h3 className="text-xl font-semibold mb-4">Sustainable Alternative Products</h3>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {productAlternatives.map((item) => (
+                <div key={item.id} className="border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{item.badge}</span>
+                    <span className="text-xs text-green-700">{item.estImpactLabel}</span>
+                  </div>
+                  <div className="font-medium">{item.name}</div>
+                  <p className="text-sm text-gray-700 mt-1">{item.description}</p>
+                  <p className="text-xs text-gray-500 mt-2">Because you spent more on <span className="font-medium">{item.category}</span></p>
+                  <div className="mt-2">
+                    <button className="text-xs text-green-700 hover:text-green-800 hover:underline" onClick={() => setFilterCategory(item.category)}>See more in {item.category}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
         <div className="bg-white rounded-2xl p-6 shadow-lg">
           <h3 className="text-xl font-semibold mb-4">Filter Purchases</h3>
@@ -806,13 +1288,26 @@ export default function SustainableConsumption() {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Search Products
               </label>
-              <input
-                type="text"
-                className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search by product name..."
-              />
+              <div className="relative">
+                <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                <input
+                  type="text"
+                  className="w-full pl-9 p-3 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search by product name..."
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    onClick={() => setSearchTerm("")}
+                    aria-label="Clear search"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Category Filter */}
@@ -823,7 +1318,7 @@ export default function SustainableConsumption() {
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value as Category | "All")}
-                className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
+                className="w-full p-3 border rounded-lg focus:ring-green-500 focus:border-green-500 bg-white"
               >
                 <option value="All">All Categories</option>
                 <option value="Groceries">Groceries</option>
@@ -844,7 +1339,7 @@ export default function SustainableConsumption() {
               <select
                 value={filterDateRange}
                 onChange={(e) => setFilterDateRange(e.target.value as "all" | "today" | "week" | "month")}
-                className="w-full p-2 border rounded focus:ring-green-500 focus:border-green-500"
+                className="w-full p-3 border rounded-lg focus:ring-green-500 focus:border-green-500 bg-white"
               >
                 <option value="all">All Time</option>
                 <option value="today">Today</option>
@@ -881,6 +1376,7 @@ export default function SustainableConsumption() {
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full table-auto border-collapse text-left text-sm">
+                <caption className="sr-only">Tracked purchases with environmental footprint</caption>
                 <thead>
                   <tr>
                     <th className="border-b border-gray-300 px-4 py-2">Date</th>

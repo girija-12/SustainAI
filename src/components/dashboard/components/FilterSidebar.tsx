@@ -111,14 +111,14 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
     const selectedValues = filters[field] as string[];
 
     return (
-      <div className="border border-gray-200 rounded-lg">
+      <div className="border border-gray-200 rounded-lg bg-white">
         <button
           onClick={() => toggleSection(field)}
-          className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition-colors"
+          className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition-colors"
         >
           <div className="flex items-center gap-2">
             {icon}
-            <span className="font-medium text-gray-900">{title}</span>
+            <span className="font-medium text-gray-900 text-sm">{title}</span>
             {selectedValues.length > 0 && (
               <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded-full">
                 {selectedValues.length}
@@ -129,18 +129,22 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
         </button>
         
         {isExpanded && (
-          <div className="px-4 pb-4 space-y-2">
-            {options.map((option) => (
-              <label key={option} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedValues.includes(option)}
-                  onChange={() => handleMultiSelect(field, option)}
-                  className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
-                />
-                <span className="text-sm text-gray-700">{option}</span>
-              </label>
-            ))}
+          <div className="px-3 pb-3 pt-2">
+            <div className="flex flex-wrap gap-2">
+              {options.map((option) => {
+                const selected = selectedValues.includes(option);
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => handleMultiSelect(field, option)}
+                    className={`text-sm px-3 py-1 rounded-full border transition-colors ${selected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -171,14 +175,14 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
     const isActive = minVal > min || maxVal < max;
 
     return (
-      <div className="border border-gray-200 rounded-lg">
+      <div className="border border-gray-200 rounded-lg bg-white">
         <button
           onClick={() => toggleSection(field)}
-          className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition-colors"
+          className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition-colors"
         >
           <div className="flex items-center gap-2">
             {icon}
-            <span className="font-medium text-gray-900">{title}</span>
+            <span className="font-medium text-gray-900 text-sm">{title}</span>
             {isActive && (
               <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded-full">
                 Active
@@ -189,9 +193,9 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
         </button>
         
         {isExpanded && (
-          <div className="px-4 pb-4 space-y-4">
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
+          <div className="px-3 pb-3 pt-2 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
                 <label className="block text-xs text-gray-600 mb-1">Min</label>
                 <input
                   type="number"
@@ -203,7 +207,7 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                 />
               </div>
-              <div className="flex-1">
+              <div>
                 <label className="block text-xs text-gray-600 mb-1">Max</label>
                 <input
                   type="number"
@@ -217,25 +221,27 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
               </div>
             </div>
             
-            <div className="relative">
-              <input
-                type="range"
-                min={min}
-                max={max}
-                step={step}
-                value={minVal}
-                onChange={(e) => handleRangeChange(field, 0, Number(e.target.value))}
-                className="absolute w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-thumb"
-              />
-              <input
-                type="range"
-                min={min}
-                max={max}
-                step={step}
-                value={maxVal}
-                onChange={(e) => handleRangeChange(field, 1, Number(e.target.value))}
-                className="absolute w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-thumb"
-              />
+            <div>
+              <div className="relative h-8">
+                <input
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={minVal}
+                  onChange={(e) => handleRangeChange(field, 0, Number(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-thumb"
+                />
+                <input
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={maxVal}
+                  onChange={(e) => handleRangeChange(field, 1, Number(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider-thumb absolute top-0 left-0"
+                />
+              </div>
             </div>
             
             <div className="flex justify-between text-xs text-gray-600">
@@ -274,76 +280,84 @@ export default function FilterSidebar({ filters, onFiltersChange, investments, i
 
         {/* Horizontal Filter Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-          {/* Region Filter */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Region</label>
-            <select
-              multiple
-              value={filters.regions}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions, option => option.value);
-                onFiltersChange({ ...filters, regions: values });
-              }}
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-            >
-              {uniqueRegions.map(region => (
-                <option key={region} value={region}>{region}</option>
-              ))}
-            </select>
-          </div>
+            {/* Region Filter */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Region</label>
+              <div className="flex flex-wrap gap-2">
+                {uniqueRegions.map(region => {
+                  const selected = filters.regions.includes(region);
+                  return (
+                    <button
+                      key={region}
+                      type="button"
+                      onClick={() => handleMultiSelect('regions', region)}
+                      className={`text-sm px-3 py-1 rounded-full border ${selected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                    >
+                      {region}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
           {/* Sector Filter */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">Sector</label>
-            <select
-              multiple
-              value={filters.sectors}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions, option => option.value);
-                onFiltersChange({ ...filters, sectors: values });
-              }}
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-            >
-              {uniqueSectors.map(sector => (
-                <option key={sector} value={sector}>{sector}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {uniqueSectors.map(sector => {
+                const selected = filters.sectors.includes(sector);
+                return (
+                  <button
+                    key={sector}
+                    type="button"
+                    onClick={() => handleMultiSelect('sectors', sector)}
+                    className={`text-sm px-3 py-1 rounded-full border ${selected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                  >
+                    {sector}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Risk Level Filter */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">Risk Level</label>
-            <select
-              multiple
-              value={filters.riskLevels}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions, option => option.value);
-                onFiltersChange({ ...filters, riskLevels: values });
-              }}
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-            >
-              {riskLevels.map(risk => (
-                <option key={risk} value={risk}>{risk}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {riskLevels.map(risk => {
+                const selected = filters.riskLevels.includes(risk);
+                return (
+                  <button
+                    key={risk}
+                    type="button"
+                    onClick={() => handleMultiSelect('riskLevels', risk)}
+                    className={`text-sm px-3 py-1 rounded-full border ${selected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                  >
+                    {risk}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Time Horizon Filter */}
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-700">Time Horizon</label>
-            <select
-              multiple
-              value={filters.timeHorizon}
-              onChange={(e) => {
-                const values = Array.from(e.target.selectedOptions, option => option.value);
-                onFiltersChange({ ...filters, timeHorizon: values });
-              }}
-              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-            >
-              {timeHorizons.map(horizon => (
-                <option key={horizon} value={horizon}>{horizon}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {timeHorizons.map(horizon => {
+                const selected = filters.timeHorizon.includes(horizon);
+                return (
+                  <button
+                    key={horizon}
+                    type="button"
+                    onClick={() => handleMultiSelect('timeHorizon', horizon)}
+                    className={`text-sm px-3 py-1 rounded-full border ${selected ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                  >
+                    {horizon}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ESG Range */}

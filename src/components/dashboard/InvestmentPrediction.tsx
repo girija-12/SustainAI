@@ -1,22 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useDashboardData, useMarketTrends, useAIAnalysis } from '../../hooks/useRealTimeData';
 import { 
-  ScatterChart, 
-  Scatter, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  BarChart,
-  Bar,
-  LineChart,
-  Line
-} from 'recharts';
-import { 
   MapPin, 
   Filter, 
   TrendingUp, 

@@ -1,4 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Circle, LayersControl, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// Fix for default markers in react-leaflet
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
+// Custom icons for different disaster types
+const createCustomIcon = (color: string) => {
+  return new L.DivIcon({
+    html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+    className: 'custom-marker',
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  });
+};
 
 // API Endpoints
 const USGS_QUAKES_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
@@ -7,7 +28,6 @@ const FLOOD_API_URL = 'https://environment.data.gov.uk/flood-monitoring/id/flood
 const WILDFIRE_API_URL = 'https://incidents.smoke.airfire.org/webservices/v1/incidents';
 const CYCLONE_API_URL = 'https://www.nhc.noaa.gov/gtwo.php?basin=atl&fdays=2';
 const REVERSE_GEOCODING_URL = 'https://nominatim.openstreetmap.org/reverse';
-const INFRASTRUCTURE_API_URL = 'https://api.openstreetmap.org/api/0.6/map?bbox=';
 
 type DisasterType = 'Earthquake' | 'Flood' | 'Cyclone' | 'Wildfire' | 'Heatwave' | 'Severe Storm';
 
@@ -46,21 +66,16 @@ const DISASTER_COLORS: Record<DisasterType, string> = {
   'Severe Storm': '#0ea5e9'
 };
 
-// World map SVG path data (simplified)
-const WORLD_MAP_PATHS = [
-  // North America
-  <path key="north-america" d="M150,100 L250,80 L300,150 L280,200 L200,180 L150,100 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-  // South America
-  <path key="south-america" d="M250,250 L300,300 L280,400 L200,380 L250,250 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-  // Europe
-  <path key="europe" d="M450,100 L550,80 L600,150 L500,180 L450,100 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-  // Africa
-  <path key="africa" d="M450,200 L550,180 L600,350 L500,380 L450,200 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-  // Asia
-  <path key="asia" d="M600,80 L800,100 L850,200 L750,300 L650,250 L600,80 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-  // Australia
-  <path key="australia" d="M750,350 L800,380 L780,420 L730,400 L750,350 Z" fill="#f0f9ff" stroke="#bae6fd" />,
-];
+// Component to handle map center updates
+function MapUpdater({ center, zoom }: { center: [number, number]; zoom: number }) {
+  const map = useMap();
+  
+  useEffect(() => {
+    map.setView(center, zoom);
+  }, [center, zoom, map]);
+
+  return null;
+}
 
 export default function GlobalDisasterDashboard() {
   const [selectedRisk, setSelectedRisk] = useState<DisasterType | 'all'>('all');
@@ -68,10 +83,8 @@ export default function GlobalDisasterDashboard() {
   const [infrastructureData, setInfrastructureData] = useState<InfrastructureData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [activeAlert, setActiveAlert] = useState<RiskData | null>(null);
-  const [viewBox, setViewBox] = useState('0 0 1000 500');
-  const mapRef = useRef<SVGSVGElement>(null);
-  const [mapCenter, setMapCenter] = useState({ lat: 20, lng: 0 });
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([20, 0]);
+  const [zoomLevel, setZoomLevel] = useState(2);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number, name?: string } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [showResiliencePanel, setShowResiliencePanel] = useState(false);
@@ -99,8 +112,12 @@ export default function GlobalDisasterDashboard() {
               name: data.display_name || `${data.address?.city || data.address?.town || data.address?.village || 'Unknown location'}`
             });
 
+            // Set map center to user location
+            setMapCenter([location.lat, location.lng]);
+            setZoomLevel(8);
+
             // Fetch infrastructure data for the area
-            fetchInfrastructureData(location.lng - 0.1, location.lat - 0.1, location.lng + 0.1, location.lat + 0.1);
+            fetchInfrastructureData(location.lat, location.lng);
           } catch (error) {
             console.error("Reverse geocoding error:", error);
             setUserLocation({
@@ -169,35 +186,50 @@ export default function GlobalDisasterDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch infrastructure data for a given bounding box
-  const fetchInfrastructureData = async (minLng: number, minLat: number, maxLng: number, maxLat: number) => {
+  // Fetch infrastructure data for a given location
+  const fetchInfrastructureData = async (lat: number, lng: number) => {
     try {
-      // In a real implementation, you would use a proper infrastructure API
-      // This is a mock implementation for demonstration
+      // Mock infrastructure data - in real implementation, use actual infrastructure APIs
       const mockInfrastructure: InfrastructureData[] = [
         {
           type: 'Hospital',
           name: 'City General Hospital',
-          lat: userLocation?.lat ? userLocation.lat + 0.01 : 0,
-          lng: userLocation?.lng ? userLocation.lng + 0.01 : 0,
+          lat: lat + 0.01,
+          lng: lng + 0.01,
           resilienceScore: 65,
           vulnerabilities: ['Flood risk', 'Aging electrical systems']
         },
         {
           type: 'Power Plant',
           name: 'Regional Power Station',
-          lat: userLocation?.lat ? userLocation.lat - 0.02 : 0,
-          lng: userLocation?.lng ? userLocation.lng - 0.01 : 0,
+          lat: lat - 0.02,
+          lng: lng - 0.01,
           resilienceScore: 45,
           vulnerabilities: ['Earthquake vulnerability', 'Single point of failure']
         },
         {
           type: 'Bridge',
           name: 'Main River Crossing',
-          lat: userLocation?.lat ? userLocation.lat + 0.015 : 0,
-          lng: userLocation?.lng ? userLocation.lng - 0.005 : 0,
+          lat: lat + 0.015,
+          lng: lng - 0.005,
           resilienceScore: 30,
           vulnerabilities: ['Flood risk', 'Structural fatigue']
+        },
+        {
+          type: 'School',
+          name: 'Central Public School',
+          lat: lat - 0.005,
+          lng: lng + 0.02,
+          resilienceScore: 55,
+          vulnerabilities: ['Limited emergency resources', 'Aging building']
+        },
+        {
+          type: 'Water Treatment',
+          name: 'Municipal Water Plant',
+          lat: lat + 0.025,
+          lng: lng - 0.015,
+          resilienceScore: 70,
+          vulnerabilities: ['Power dependency', 'Limited backup capacity']
         }
       ];
 
@@ -210,7 +242,6 @@ export default function GlobalDisasterDashboard() {
   // AI-powered analysis to enhance disaster data with infrastructure impact
   const enhanceWithImpactAnalysis = async (disasters: RiskData[]): Promise<RiskData[]> => {
     return disasters.map(disaster => {
-      // Simulate AI analysis of infrastructure impact
       let infrastructureImpact: string[] = [];
       let resilienceRecommendations: string[] = [];
 
@@ -249,6 +280,18 @@ export default function GlobalDisasterDashboard() {
             'Create defensible space around infrastructure',
             'Underground critical utilities',
             'Harden structures with fire-resistant materials'
+          ];
+          break;
+        case 'Cyclone':
+          infrastructureImpact = [
+            'Roof and structural damage to buildings',
+            'Power outage risks',
+            'Transportation network disruptions'
+          ];
+          resilienceRecommendations = [
+            'Reinforce building structures',
+            'Install backup power systems',
+            'Strengthen communication networks'
           ];
           break;
         default:
@@ -438,22 +481,11 @@ export default function GlobalDisasterDashboard() {
     return risk;
   };
 
-  // Convert lat/lng to SVG coordinates
-  const getSvgCoords = (lat: number, lng: number) => {
-    const x = (lng + 180) * (1000 / 360);
-    const y = (90 - lat) * (500 / 180);
-    
-    return { 
-      x: Math.max(0, Math.min(1000, x)), 
-      y: Math.max(0, Math.min(500, y)) 
-    };
-  };
-
   // Center map on user location
   const centerOnUserLocation = () => {
     if (userLocation) {
-      setMapCenter(userLocation);
-      setZoomLevel(2); // Zoom in a bit when centering on user
+      setMapCenter([userLocation.lat, userLocation.lng]);
+      setZoomLevel(8);
     }
   };
 
@@ -466,9 +498,6 @@ export default function GlobalDisasterDashboard() {
 
   // Get resilience recommendations for a specific location
   const getLocationResilienceRecommendations = (lat: number, lng: number): string[] => {
-    // In a real implementation, this would use AI to analyze the specific location
-    // For now, we'll return generic recommendations based on nearby disasters
-    
     const nearbyDisasters = riskData.filter(disaster => {
       const distance = Math.sqrt(
         Math.pow(disaster.lat - lat, 2) + Math.pow(disaster.lng - lng, 2)
@@ -597,7 +626,7 @@ export default function GlobalDisasterDashboard() {
                 <h3 className="text-xl font-semibold">Global Disaster Map</h3>
                 <div className="flex gap-2">
                   <button 
-                    onClick={() => setZoomLevel(Math.min(zoomLevel + 0.5, 3))}
+                    onClick={() => setZoomLevel(Math.min(zoomLevel + 1, 10))}
                     className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -605,7 +634,7 @@ export default function GlobalDisasterDashboard() {
                     </svg>
                   </button>
                   <button 
-                    onClick={() => setZoomLevel(Math.max(zoomLevel - 0.5, 0.5))}
+                    onClick={() => setZoomLevel(Math.max(zoomLevel - 1, 1))}
                     className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -633,132 +662,162 @@ export default function GlobalDisasterDashboard() {
                     <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-orange-500"></div>
                   </div>
                 ) : (
-                  <svg 
-                    ref={mapRef}
-                    viewBox={viewBox} 
-                    className="w-full h-full"
-                    preserveAspectRatio="xMidYMid meet"
+                  <MapContainer
+                    center={mapCenter}
+                    zoom={zoomLevel}
+                    style={{ height: '100%', width: '100%' }}
+                    zoomControl={false}
                   >
-                    {/* World map background */}
-                    {WORLD_MAP_PATHS}
+                    <MapUpdater center={mapCenter} zoom={zoomLevel} />
                     
+                    <LayersControl position="topright">
+                      <LayersControl.BaseLayer checked name="OpenStreetMap">
+                        <TileLayer
+                          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        />
+                      </LayersControl.BaseLayer>
+                      <LayersControl.BaseLayer name="Satellite">
+                        <TileLayer
+                          url="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
+                          subdomains={['mt1','mt2','mt3']}
+                          attribution='&copy; <a href="https://maps.google.com">Google Maps</a>'
+                        />
+                      </LayersControl.BaseLayer>
+                    </LayersControl>
+
                     {/* User location marker */}
                     {userLocation && (
-                      <g>
-                        <circle
-                          cx={getSvgCoords(userLocation.lat, userLocation.lng).x}
-                          cy={getSvgCoords(userLocation.lat, userLocation.lng).y}
-                          r={8 * zoomLevel}
-                          fill="#4f46e5"
-                          fillOpacity="0.2"
-                          stroke="#4f46e5"
-                          strokeWidth="1.5"
-                        />
-                        <circle
-                          cx={getSvgCoords(userLocation.lat, userLocation.lng).x}
-                          cy={getSvgCoords(userLocation.lat, userLocation.lng).y}
-                          r={4 * zoomLevel}
-                          fill="#4f46e5"
-                          stroke="#fff"
-                          strokeWidth="2"
-                        />
-                      </g>
+                      <Marker
+                        position={[userLocation.lat, userLocation.lng]}
+                        icon={new L.DivIcon({
+                          html: `<div style="background-color: #4f46e5; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                          className: 'user-location-marker',
+                          iconSize: [16, 16],
+                          iconAnchor: [8, 8],
+                        })}
+                      >
+                        <Popup>
+                          <div className="text-sm">
+                            <strong>Your Location</strong><br />
+                            {userLocation.name}
+                          </div>
+                        </Popup>
+                      </Marker>
                     )}
 
                     {/* Infrastructure markers */}
                     {infrastructureData.map((infra) => {
-                      const { x, y } = getSvgCoords(infra.lat, infra.lng);
                       const resilienceColor = infra.resilienceScore > 70 ? '#10b981' : 
                                            infra.resilienceScore > 40 ? '#f59e0b' : '#ef4444';
                       
                       return (
-                        <g 
-                          key={`infra-${infra.name}`} 
-                          onClick={() => {
-                            setSelectedInfrastructure(infra);
-                            setShowResiliencePanel(true);
+                        <Marker
+                          key={`infra-${infra.name}`}
+                          position={[infra.lat, infra.lng]}
+                          icon={new L.DivIcon({
+                            html: `
+                              <div style="
+                                background-color: ${resilienceColor}; 
+                                width: 24px; 
+                                height: 24px; 
+                                border-radius: 50%; 
+                                border: 3px solid white; 
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                                display: flex;
+                                align-items: center;
+                                justify-content: center;
+                                font-weight: bold;
+                                color: white;
+                                font-size: 10px;
+                              ">
+                                ${infra.type.charAt(0)}
+                              </div>
+                            `,
+                            className: 'infrastructure-marker',
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12],
+                          })}
+                          eventHandlers={{
+                            click: () => {
+                              setSelectedInfrastructure(infra);
+                              setShowResiliencePanel(true);
+                            },
                           }}
-                          className="cursor-pointer"
                         >
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r={6 * zoomLevel}
-                            fill={resilienceColor}
-                            fillOpacity="0.7"
-                            stroke="#fff"
-                            strokeWidth="1.5"
-                          >
-                            <title>
-                              {infra.name} - Resilience: {infra.resilienceScore}/100
-                            </title>
-                          </circle>
-                          <text
-                            x={x}
-                            y={y}
-                            textAnchor="middle"
-                            dy=".3em"
-                            fill="#fff"
-                            fontSize={10 * zoomLevel}
-                            fontWeight="bold"
-                          >
-                            {infra.type.charAt(0)}
-                          </text>
-                        </g>
+                          <Popup>
+                            <div className="text-sm">
+                              <strong>{infra.name}</strong><br />
+                              Type: {infra.type}<br />
+                              Resilience Score: {infra.resilienceScore}/100<br />
+                              <button 
+                                className="mt-1 px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
+                                onClick={() => {
+                                  setSelectedInfrastructure(infra);
+                                  setShowResiliencePanel(true);
+                                }}
+                              >
+                                View Details
+                              </button>
+                            </div>
+                          </Popup>
+                        </Marker>
                       );
                     })}
 
                     {/* Disaster markers */}
+                    {filteredRisks.map((risk) => (
+                      <Marker
+                        key={risk.id}
+                        position={[risk.lat, risk.lng]}
+                        icon={createCustomIcon(DISASTER_COLORS[risk.type])}
+                        eventHandlers={{
+                          click: () => setActiveAlert(risk),
+                        }}
+                      >
+                        <Popup>
+                          <div className="text-sm">
+                            <strong style={{ color: DISASTER_COLORS[risk.type] }}>
+                              {risk.type}
+                            </strong><br />
+                            Location: {risk.location}<br />
+                            Risk Level: {risk.risk}%<br />
+                            Time: {risk.time}<br />
+                            {risk.details && <div>Details: {risk.details}</div>}
+                            <button 
+                              className="mt-1 px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
+                              onClick={() => {
+                                setActiveAlert(risk);
+                                setShowResiliencePanel(true);
+                              }}
+                            >
+                              Resilience Tips
+                            </button>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    ))}
+
+                    {/* Disaster radius circles */}
                     {filteredRisks.map((risk) => {
-                      const { x, y } = getSvgCoords(risk.lat, risk.lng);
-                      const riskColor = DISASTER_COLORS[risk.type];
-                      const scaledRadius = risk.radius ? risk.radius * zoomLevel / 10 : 8;
+                      if (!risk.radius) return null;
                       
                       return (
-                        <g key={risk.id} onClick={() => setActiveAlert(risk)} className="cursor-pointer">
-                          {/* Area of effect for disasters with radius */}
-                          {risk.radius && (
-                            <circle
-                              cx={x}
-                              cy={y}
-                              r={scaledRadius}
-                              fill={riskColor}
-                              fillOpacity="0.1"
-                              stroke={riskColor}
-                              strokeWidth="1"
-                              strokeOpacity="0.5"
-                            />
-                          )}
-                          
-                          {/* Pulsing effect */}
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r={scaledRadius * 1.5}
-                            fill={riskColor}
-                            fillOpacity="0.2"
-                            style={{ animation: 'pulse 2s infinite' }}
-                          />
-                          
-                          {/* Main marker */}
-                          <circle
-                            cx={x}
-                            cy={y}
-                            r={Math.max(5, scaledRadius / 2)}
-                            fill={riskColor}
-                            stroke="#fff"
-                            strokeWidth="1.5"
-                          >
-                            <title>
-                              {risk.location}: {risk.risk}% {risk.type} risk
-                              {risk.details ? ` - ${risk.details}` : ''}
-                              {risk.country ? ` (${risk.country})` : ''}
-                            </title>
-                          </circle>
-                        </g>
+                        <Circle
+                          key={`circle-${risk.id}`}
+                          center={[risk.lat, risk.lng]}
+                          radius={risk.radius * 1000} // Convert km to meters
+                          pathOptions={{
+                            fillColor: DISASTER_COLORS[risk.type],
+                            fillOpacity: 0.1,
+                            color: DISASTER_COLORS[risk.type],
+                            opacity: 0.5,
+                            weight: 1,
+                          }}
+                        />
                       );
                     })}
-                  </svg>
+                  </MapContainer>
                 )}
               </div>
             </div>
@@ -1023,16 +1082,6 @@ export default function GlobalDisasterDashboard() {
           </div>
         </div>
       </div>
-
-      <style>
-        {`
-          @keyframes pulse {
-            0% { transform: scale(0.95); opacity: 0.7; }
-            70% { transform: scale(1.3); opacity: 0.1; }
-            100% { transform: scale(0.95); opacity: 0.7; }
-          }
-        `}
-      </style>
     </div>
   );
 }

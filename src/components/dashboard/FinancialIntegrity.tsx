@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import ChatWidget from "../shared/ChatWidget";
 import Tesseract from "tesseract.js";
 
 /* ---------- Mock data ---------- */
@@ -610,21 +609,6 @@ export default function FinancialIntegrity() {
       <div className="grid lg:grid-cols-3 gap-8">
         {/* Left Panel */}
         <div className="lg:col-span-1">
-          <ChatWidget
-            agentName="IntegrityBot"
-            agentDescription="AI-powered fraud detection and financial analysis"
-            messages={[
-              {
-                role: "assistant",
-                content: "Hi! Upload sanction letters, receipts, or utilization proofs at each fund stage to ensure transparency.",
-              },
-              { role: "user", content: "Can I create a fund from a sanction order?" },
-              { role: "assistant", content: "Yes — enable 'Create Fund from Sanction' and provide sanctioned amount & SHG." },
-            ]}
-            placeholder="Ask IntegrityBot..."
-            bgColor="from-purple-500 to-indigo-600"
-          />
-
           {/* Alerts */}
           <div className="bg-white p-4 rounded-xl shadow-md mt-4">
             <h4 className="font-semibold mb-2">Alerts</h4>

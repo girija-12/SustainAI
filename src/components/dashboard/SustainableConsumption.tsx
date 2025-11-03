@@ -960,22 +960,7 @@ export default function SustainableConsumption() {
 
   return (
     <div className="grid lg:grid-cols-3 gap-8 p-4">
-      {/* Chat Widget */}
-      <div className="lg:col-span-1">
-        <ChatWidget
-          agentName="GreenAdvisor"
-          agentDescription="Your AI companion for sustainable shopping decisions"
-          messages={[
-            {
-              role: "assistant",
-              content:
-                "Hi! I'm GreenAdvisor, your sustainable shopping companion. How can I help you?",
-            },
-          ]}
-          placeholder="Ask about eco-friendly products..."
-          bgColor="from-green-500 to-emerald-600"
-        />
-      </div>
+      
 
       {/* Main Content */}
       <div className="lg:col-span-2 space-y-6">

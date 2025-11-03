@@ -527,30 +527,6 @@ export default function InvestmentPrediction() {
                 </div>
               </div>
 
-              {/* AI Chat Widget */}
-              <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 overflow-hidden">
-                <div className="bg-gradient-to-r from-emerald-500 to-teal-600 p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
-                      <MessageCircle className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-white">EcoVest AI</h3>
-                      <p className="text-emerald-100 text-sm">Your sustainable investment advisor</p>
-                    </div>
-                  </div>
-                </div>
-                <ChatWidget
-                  agentName="EcoVest"
-                  agentDescription="AI advisor for sustainable investments"
-                  messages={chatMessages}
-                  onSendMessage={handleChatMessage}
-                  placeholder="Ask about ESG opportunities..."
-                  bgColor="from-emerald-500 to-teal-600"
-                  isLoading={aiLoading}
-                />
-              </div>
-              
               {/* Enhanced Alerts Feed */}
               <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl border border-white/20 overflow-hidden">
                 <div className="bg-gradient-to-r from-blue-500 to-purple-600 p-4">

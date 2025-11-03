@@ -155,45 +155,7 @@ export default function RealTimeMonitoring() {
   return (
     <div className="bg-gray-900 min-h-screen -m-8 p-8">
       <div className="grid lg:grid-cols-3 gap-8">
-        {/* AI Agent Card */}
-        <div className="lg:col-span-1">
-          <div className="bg-gray-800 rounded-2xl p-6 shadow-xl border border-gray-700">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-orange-600 rounded-xl flex items-center justify-center">
-                <span className="text-white font-bold text-lg">🚨</span>
-              </div>
-              <div>
-                <h3 className="text-xl font-semibold text-white">AlertAI</h3>
-                <p className="text-gray-400 text-sm">Real-time monitoring and alert system</p>
-              </div>
-            </div>
-            
-            <div className="bg-gray-700 rounded-xl p-4 max-h-96 overflow-y-auto">
-              <div className="space-y-4">
-                {chatMessages.map((message, index) => (
-                  <div key={index} className={`${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                    <div className={`inline-block p-3 rounded-lg max-w-xs ${
-                      message.role === 'user' 
-                        ? 'bg-red-600 text-white' 
-                        : 'bg-gray-600 text-gray-100'
-                    }`}>
-                      {message.content}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            
-            <div className="mt-4">
-              <input
-                type="text"
-                placeholder="Ask about system status..."
-                className="w-full bg-gray-700 text-white p-3 rounded-xl border border-gray-600 focus:border-red-500 focus:outline-none"
-              />
-            </div>
-          </div>
-        </div>
-
+        
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-6">
           {/* City Selector */}

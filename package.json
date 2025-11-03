@@ -2,6 +2,7 @@
   "name": "flex-template",
   "private": true,
   "version": "0.0.0",
+  "homepage": "https://girija-12.github.io/SustainAI",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
@@ -9,6 +10,7 @@
     "dev:backend": "convex dev",
     "build": "vite build",
     "preview": "vite preview",
+    "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
     "lint": "tsc -p convex -noEmit --pretty false && tsc -p . -noEmit --pretty false && convex dev --once && vite build"
   },

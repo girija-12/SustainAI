@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useDashboardData, useMarketTrends, useAIAnalysis } from '../../hooks/useRealTimeData';
-import { 
-  MapPin, 
-  Filter, 
-  TrendingUp, 
-  AlertTriangle, 
-  Globe, 
+import {
+  MapPin,
+  Filter,
+  TrendingUp,
+  AlertTriangle,
+  Globe,
   DollarSign,
   Leaf,
   Shield,
@@ -218,7 +218,7 @@ export default function InvestmentPrediction() {
   // Real-time data hooks (temporarily disabled to prevent infinite loops)
   const { data: marketTrends, loading: marketLoading } = useMarketTrends(false);
   const { analyzeInvestment, getChatResponse, loading: aiLoading } = useAIAnalysis();
-  
+
   // Use useMemo to prevent infinite loops with investments dependency
   const stableInvestments = useMemo(() => investments, []);
   const { alerts: realTimeAlerts, loading: dashboardLoading } = useDashboardData(stableInvestments);
@@ -253,7 +253,7 @@ export default function InvestmentPrediction() {
     }
   ];
 
-  const [chatMessages, setChatMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([
     { role: 'assistant' as const, content: 'Hi! I\'m EcoVest, your AI-powered sustainable investment advisor. I can help you analyze ESG opportunities, simulate portfolio risks, and find impactful investments. How can I assist you today?' }
   ]);
 
@@ -265,7 +265,7 @@ export default function InvestmentPrediction() {
     try {
       // Add context about current portfolio and market conditions
       const contextMessage = `Current portfolio context: ${filteredInvestments.length} investments, average ESG score: ${Math.round(filteredInvestments.reduce((acc, inv) => acc + inv.esgScore, 0) / filteredInvestments.length || 0)}, market trends: ${marketTrends?.slice(0, 2).map(t => `${t.symbol}: ${t.changePercent}`).join(', ') || 'Loading...'}. User question: ${message}`;
-      
+
       const response = await getChatResponse([
         ...chatMessages.slice(-5), // Keep last 5 messages for context
         { role: 'user', content: contextMessage }
@@ -282,14 +282,14 @@ export default function InvestmentPrediction() {
 
   // Initialize alerts with real-time data
   const [alerts, setAlerts] = useState<Alert[]>([]);
-  
+
   useEffect(() => {
     // Combine sample alerts with real-time alerts
     const combinedAlerts = [
       ...sampleAlerts,
       ...(realTimeAlerts || [])
     ].slice(0, 20); // Limit to 20 most recent alerts
-    
+
     setAlerts(combinedAlerts);
   }, [realTimeAlerts]);
 
@@ -311,7 +311,7 @@ export default function InvestmentPrediction() {
     setSelectedInvestment(investment);
     setShowModal(true);
     setAiAnalysis('');
-    
+
     // Get AI analysis for the selected investment
     try {
       const analysis = await analyzeInvestment(investment);
@@ -346,34 +346,12 @@ export default function InvestmentPrediction() {
 
       {/* Enhanced Filter Bar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-white/20 p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <Filter className="w-5 h-5 text-emerald-600" />
-            <h3 className="text-lg font-semibold text-gray-900">Smart Filters</h3>
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-600">Showing {filteredInvestments.length} of {investments.length} opportunities</span>
-              <button 
-                onClick={() => setFilters({
-                  regions: [],
-                  sectors: [],
-                  riskLevels: [],
-                  esgRange: [0, 100],
-                  investmentRange: [1000, 1000000],
-                  timeHorizon: []
-                })}
-                className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
-              >
-                Clear All
-              </button>
-            </div>
-          </div>
-          <FilterSidebar 
+        <FilterSidebar
             filters={filters}
             onFiltersChange={setFilters}
             investments={investments}
             isHorizontal={true}
           />
-        </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
@@ -407,7 +385,7 @@ export default function InvestmentPrediction() {
                   </div>
                 </div>
               </div>
-              <GlobalInvestmentMap 
+              <GlobalInvestmentMap
                 investments={filteredInvestments}
                 onInvestmentSelect={handleInvestmentSelect}
               />
@@ -427,7 +405,7 @@ export default function InvestmentPrediction() {
                   </div>
                 </div>
               </div>
-              
+
               <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-6 shadow-lg border border-green-200">
                 <div className="flex items-center justify-between">
                   <div>
@@ -442,7 +420,7 @@ export default function InvestmentPrediction() {
                   </div>
                 </div>
               </div>
-              
+
               <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-6 shadow-lg border border-blue-200">
                 <div className="flex items-center justify-between">
                   <div>
@@ -476,7 +454,7 @@ export default function InvestmentPrediction() {
                   <span className="text-blue-700 font-medium text-sm">Interactive</span>
                 </div>
               </div>
-              <ESGROIGraph 
+              <ESGROIGraph
                 investments={filteredInvestments}
                 onInvestmentSelect={handleInvestmentSelect}
               />
@@ -485,14 +463,14 @@ export default function InvestmentPrediction() {
             {/* Portfolio Analyzer and Risk Simulator Row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <PortfolioESGAnalyzer investments={filteredInvestments} />
-              <ImpactRiskSimulator 
+              <ImpactRiskSimulator
                 investments={filteredInvestments}
                 onSimulationComplete={setSimulationResults}
               />
             </div>
 
             {/* Top Opportunities Table */}
-            <TopOpportunitiesTable 
+            <TopOpportunitiesTable
               investments={filteredInvestments}
               searchTerm={searchTerm}
               sortBy={sortBy}
@@ -540,7 +518,7 @@ export default function InvestmentPrediction() {
                     </div>
                   </div>
                 </div>
-                <AlertsFeed 
+                <AlertsFeed
                   alerts={alerts}
                   onAlertAction={handleAlertAction}
                 />
@@ -557,14 +535,14 @@ export default function InvestmentPrediction() {
             <div className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">{selectedInvestment.name}</h2>
-                <button 
+                <button
                   onClick={() => setShowModal(false)}
                   className="p-2 hover:bg-gray-100 rounded-lg"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
+
               <div className="space-y-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-gray-50 rounded-lg">
@@ -576,16 +554,15 @@ export default function InvestmentPrediction() {
                     <p className="text-2xl font-bold text-green-600">{selectedInvestment.esgScore}</p>
                   </div>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold mb-2">Regional Analysis</h3>
                   <div className="space-y-2">
                     <div className="flex justify-between">
                       <span>Climate Risk:</span>
-                      <span className={`font-medium ${
-                        selectedInvestment.climateRisk < 30 ? 'text-green-600' :
-                        selectedInvestment.climateRisk < 60 ? 'text-yellow-600' : 'text-red-600'
-                      }`}>
+                      <span className={`font-medium ${selectedInvestment.climateRisk < 30 ? 'text-green-600' :
+                          selectedInvestment.climateRisk < 60 ? 'text-yellow-600' : 'text-red-600'
+                        }`}>
                         {selectedInvestment.climateRisk}%
                       </span>
                     </div>
@@ -595,7 +572,7 @@ export default function InvestmentPrediction() {
                     </div>
                   </div>
                 </div>
-                
+
                 <div>
                   <h3 className="font-semibold mb-2">SDG Alignment</h3>
                   <div className="flex flex-wrap gap-2">
@@ -659,12 +636,12 @@ export default function InvestmentPrediction() {
                     </div>
                   </div>
                 )}
-                
+
                 <div className="flex gap-4">
                   <button className="flex-1 bg-emerald-500 text-white py-3 rounded-lg hover:bg-emerald-600 transition-colors font-medium">
                     Add to Portfolio
                   </button>
-                  <button 
+                  <button
                     onClick={async () => {
                       try {
                         const analysis = await analyzeInvestment(selectedInvestment);
@@ -702,7 +679,7 @@ export default function InvestmentPrediction() {
                 {!dashboardLoading && !marketLoading && !aiLoading && '⚡ Preparing dashboard...'}
               </div>
               <div className="w-48 bg-gray-200 rounded-full h-1 mt-3">
-                <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-1 rounded-full animate-pulse" style={{width: '70%'}}></div>
+                <div className="bg-gradient-to-r from-emerald-500 to-teal-500 h-1 rounded-full animate-pulse" style={{ width: '70%' }}></div>
               </div>
             </div>
           </div>
@@ -713,9 +690,8 @@ export default function InvestmentPrediction() {
       <div className="fixed bottom-6 right-6 z-30">
         <div className="bg-white/90 backdrop-blur-sm rounded-xl shadow-xl p-4 flex items-center gap-3 text-sm border border-white/20">
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${
-              dashboardLoading || marketLoading ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'
-            }`}></div>
+            <div className={`w-3 h-3 rounded-full ${dashboardLoading || marketLoading ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'
+              }`}></div>
             <span className="font-medium text-gray-800">
               {dashboardLoading || marketLoading ? 'Syncing Data...' : 'Live & Active'}
             </span>

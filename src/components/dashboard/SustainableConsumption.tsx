@@ -1,7 +1,8 @@
-import { ChangeEvent, useEffect, useState, useMemo } from "react";
+import { ChangeEvent, useEffect, useState, useMemo, useRef } from "react";
 import ChatWidget from "../shared/ChatWidget";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api"; // adjust path as per your setup
+import { OpenFoodFactsService, AIService } from "../../services/apiService";
 
 type Category = | "Groceries" | "Apparel" | "Electronics" | "Furniture" | "Beauty" | "Toys" | "Books";
 
@@ -89,7 +90,7 @@ const categoryKeywords: Record<Category, string[]> = {
 // Function to detect category based on product name
 const detectCategory = (productName: string): Category => {
   const lowerProduct = productName.toLowerCase().trim();
-  
+
   // Check each category's keywords
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
     for (const keyword of keywords) {
@@ -98,7 +99,7 @@ const detectCategory = (productName: string): Category => {
       }
     }
   }
-  
+
   // Default to Groceries if no match found
   return "Groceries";
 };
@@ -112,12 +113,38 @@ export default function SustainableConsumption() {
   const [price, setPrice] = useState(0);
   const [inputMethod, setInputMethod] = useState<"manual" | "receipt">("manual");
   const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
-  
+
   // Filter states
   const [filterCategory, setFilterCategory] = useState<Category | "All">("All");
   const [filterDateRange, setFilterDateRange] = useState<"all" | "today" | "week" | "month">("all");
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Recommendation states
+  const [productRecommendations, setProductRecommendations] = useState<{
+    product: string;
+    category: string;
+    currentData: any;
+    alternatives: any[];
+    recommendation: string;
+    loading: boolean;
+  }[]>([]);
+  const [overallRecommendation, setOverallRecommendation] = useState<string>("");
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   
+  // Cache for recommendations to avoid duplicate API calls
+  type RecommendationCache = Map<string, {
+    product: string;
+    category: string;
+    currentData: any;
+    alternatives: any[];
+    recommendation: string;
+    timestamp: number;
+  }>;
+  const recommendationCacheRef = useRef<RecommendationCache>(new Map());
+  
+  // Track last overall recommendation timestamp
+  const lastOverallRecommendationRef = useRef<number>(0);
+
   // Allow letters, numbers, spaces, dashes and common symbols so users can type things like "iPhone 15 Pro - 256GB"
   const productNameRegex = /^[A-Za-z0-9\s\-+&()'.,\/]*$/;
   // Calculate total footprints
@@ -135,7 +162,7 @@ export default function SustainableConsumption() {
   const getDateRange = () => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
+
     switch (filterDateRange) {
       case "today":
         return {
@@ -211,6 +238,149 @@ export default function SustainableConsumption() {
       setPurchases(mappedPurchases);
     }
   }, [backendPurchases, searchTerm]);
+
+  // Fetch product recommendations when purchases change (optimized to minimize API calls)
+  useEffect(() => {
+    const fetchRecommendations = async () => {
+      if (purchases.length === 0) {
+        setProductRecommendations([]);
+        setOverallRecommendation("");
+        return;
+      }
+
+      setIsLoadingRecommendations(true);
+
+      try {
+        // Only process top 3 products to minimize API calls
+        const productsToProcess = purchases.slice(0, 3);
+        const cacheKey = productsToProcess.map(p => `${p.product}:${p.category}`).join('|');
+        
+        // Check if we have cached results for these exact products
+        const now = Date.now();
+        const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes cache
+        
+        // Fetch product data and alternatives (only for new/uncached products)
+        const recommendationPromises = productsToProcess.map(async (purchase) => {
+          const cacheKey = `${purchase.product}:${purchase.category}`;
+          const cached = recommendationCacheRef.current.get(cacheKey);
+          
+          // Use cache if available and fresh (< 5 minutes old)
+          if (cached && (now - cached.timestamp) < CACHE_DURATION) {
+            return {
+              product: cached.product,
+              category: cached.category,
+              currentData: cached.currentData,
+              alternatives: cached.alternatives,
+              recommendation: cached.recommendation,
+              loading: false,
+            };
+          }
+
+          try {
+            // Query Open Food Facts for current product (only if not cached)
+            const currentProductData = await OpenFoodFactsService.searchProduct(purchase.product);
+            
+            // Get better alternatives (only if not cached)
+            const alternatives = await OpenFoodFactsService.getBetterAlternatives(
+              purchase.product,
+              purchase.category
+            );
+
+            // Generate AI recommendation ONLY if we have alternatives AND haven't cached it
+            // This is the most expensive call, so we cache it aggressively
+            let recommendation = "";
+            if (alternatives.length > 0 && currentProductData) {
+              // Only call AI if we don't have a cached recommendation
+              if (!cached || !cached.recommendation) {
+                try {
+                  recommendation = await AIService.generateGreenerAlternatives(
+                    purchase.product,
+                    purchase.category,
+                    currentProductData,
+                    alternatives
+                  );
+                } catch (aiError) {
+                  console.error(`AI recommendation error for ${purchase.product}:`, aiError);
+                  // Use cached recommendation if available, otherwise skip
+                  recommendation = cached?.recommendation || "";
+                }
+              } else {
+                recommendation = cached.recommendation;
+              }
+            }
+
+            const result = {
+              product: purchase.product,
+              category: purchase.category,
+              currentData: currentProductData,
+              alternatives,
+              recommendation,
+              loading: false,
+            };
+
+            // Cache the result
+            recommendationCacheRef.current.set(cacheKey, {
+              ...result,
+              timestamp: now,
+            });
+
+            return result;
+          } catch (error) {
+            console.error(`Error fetching recommendations for ${purchase.product}:`, error);
+            // Return cached data if available
+            if (cached) {
+              return {
+                product: cached.product,
+                category: cached.category,
+                currentData: cached.currentData,
+                alternatives: cached.alternatives,
+                recommendation: cached.recommendation,
+                loading: false,
+              };
+            }
+            return {
+              product: purchase.product,
+              category: purchase.category,
+              currentData: null,
+              alternatives: [],
+              recommendation: "",
+              loading: false,
+            };
+          }
+        });
+
+        const productRecs = await Promise.all(recommendationPromises);
+        setProductRecommendations(productRecs);
+
+        // Generate overall recommendations only once every 10 minutes to minimize API calls
+        const timeSinceLastOverall = now - lastOverallRecommendationRef.current;
+        const OVERALL_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+        
+        if (timeSinceLastOverall > OVERALL_CACHE_DURATION || !overallRecommendation) {
+          const purchaseList = purchases.map((p) => ({
+            product: p.product,
+            category: p.category,
+          }));
+          try {
+            const overallRec = await AIService.generateProductRecommendations(purchaseList);
+            setOverallRecommendation(overallRec);
+            lastOverallRecommendationRef.current = now;
+          } catch (error) {
+            console.error("Error generating overall recommendations:", error);
+            // Keep existing recommendation if API call fails
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching recommendations:", error);
+      } finally {
+        setIsLoadingRecommendations(false);
+      }
+    };
+
+    // Increased debounce time to reduce API calls (3 seconds instead of 1)
+    const timeoutId = setTimeout(fetchRecommendations, 3000);
+    return () => clearTimeout(timeoutId);
+  }, [purchases]);
 
   // Simple sustainability score based on footprint (lower footprint = higher score)
   const sustainabilityScore = Math.max(
@@ -487,8 +657,7 @@ export default function SustainableConsumption() {
     return totals;
   }, [purchases]);
 
-  // --- OpenAI-driven personalized product alternatives ---
-  const OPENAI_KEY = import.meta.env.VITE_SUSTAINABILITY_OPENAI_API_KEY as string | undefined;
+  // --- AI-driven personalized product alternatives (uses Gemini with OpenAI fallback) ---
   const [aiProductAlternatives, setAiProductAlternatives] = useState<ProductAlt[] | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -506,12 +675,6 @@ export default function SustainableConsumption() {
 
   // Fetch recommendations from OpenAI (chat completions), expect a strict JSON array
   const fetchAIRecommendations = async () => {
-    if (!OPENAI_KEY) {
-      setAiError('OpenAI API key not found in environment (VITE_SUSTAINABILITY_OPENAI_API_KEY)');
-      setAiProductAlternatives(null);
-      return;
-    }
-
     if (!purchases || purchases.length === 0) {
       setAiProductAlternatives(null);
       return;
@@ -527,55 +690,61 @@ export default function SustainableConsumption() {
         .map(([cat]) => cat)
         .slice(0, 3);
 
-      const system = `You are GreenAdvisor, an assistant that suggests 3-6 concrete sustainable product alternatives tailored to a user's recent purchases. Return ONLY a JSON array of objects (no surrounding text). Each object must have these keys: id (short unique string), name, description, badge, estImpactLabel (short human-readable impact), category (one of Groceries|Apparel|Electronics|Furniture|Beauty|Toys|Books).`; 
+      const system = `You are GreenAdvisor, an assistant that suggests 3-6 concrete sustainable product alternatives tailored to a user's recent purchases. Return ONLY a JSON array of objects (no surrounding text). Each object must have these keys: id (short unique string), name, description, badge, estImpactLabel (short human-readable impact), category (one of Groceries|Apparel|Electronics|Furniture|Beauty|Toys|Books).`;
 
       const user = `Top categories by spend: ${topCategories.join(', ') || 'none'}.\nRecent purchases: ${JSON.stringify(purchaseSummary)}.\nReturn 4-8 alternative products prioritized by the user's top categories. Be concise and ensure valid JSON output.`;
 
-      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-          max_tokens: 600,
-          temperature: 0.7,
-        }),
-      });
+      // Use AIService which has Gemini fallback logic built in
+      const content = await AIService.getChatCompletion([
+        { role: 'system', content: system + ' IMPORTANT: Return ONLY valid JSON array, no other text.' },
+        { role: 'user', content: user }
+      ]);
 
-      if (!resp.ok) {
-        const errText = await resp.text();
-        throw new Error(`OpenAI request failed: ${resp.status} ${errText}`);
-      }
-
-      const json = await resp.json();
-      const content = json?.choices?.[0]?.message?.content;
-      if (!content) throw new Error('No content in OpenAI response');
+      if (!content) throw new Error('No content in AI response');
 
       // Try to locate JSON inside the response content
       let parsed: ProductAlt[] | null = null;
       try {
-        // Sometimes the model wraps JSON in markdown or backticks; strip them
-        const cleaned = content.trim().replace(/^```json\n?|\n?```$/g, '').trim();
-        parsed = JSON.parse(cleaned);
-      } catch (e) {
-        // Attempt a more lenient extraction of the first JSON array in the text
-        const match = content.match(/\[\s*\{[\s\S]*\}\s*\]/);
-        if (match) {
-          parsed = JSON.parse(match[0]);
-        } else {
-          throw e;
+        // Remove any markdown formatting and clean the content
+        let cleaned = content.trim()
+          .replace(/^```json\n?|\n?```$/g, '') // Remove code blocks
+          .replace(/^```\w*\n?|\n?```$/g, '') // Remove any other code block types
+          .trim();
+
+        // If there's text before or after the JSON array, try to extract just the array
+        const arrayMatch = cleaned.match(/\[\s*\{[\s\S]*?\}\s*\]/);
+        if (arrayMatch) {
+          cleaned = arrayMatch[0];
         }
+
+        try {
+          // First attempt: direct JSON parse
+          parsed = JSON.parse(cleaned);
+        } catch (initialError) {
+          // Try to fix common JSON issues
+          const fixedJson = cleaned
+            .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2": ') // Fix unquoted keys
+            .replace(/'/g, '"') // Replace single quotes with double quotes
+            .replace(/,(\s*[}\]])/g, '$1'); // Remove trailing commas
+          
+          parsed = JSON.parse(fixedJson);
+        }
+
+        // Validate that we got an array
+        if (!Array.isArray(parsed)) {
+          throw new Error('AI response is not a valid array');
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error('AI response parsing failed:', {
+          original: content,
+          error: errorMessage
+        });
+        throw new Error('Could not parse AI response as valid JSON');
       }
 
       // Basic validation and normalization
-      if (!Array.isArray(parsed)) throw new Error('OpenAI returned unexpected JSON format');
-
+      // Note: Array.isArray check was moved inside the try block above
       const normalized: ProductAlt[] = parsed.map((it: any, idx: number) => ({
         id: it.id || `ai-${Date.now()}-${idx}`,
         name: it.name || it.title || 'Unnamed product',
@@ -586,9 +755,10 @@ export default function SustainableConsumption() {
       }));
 
       setAiProductAlternatives(normalized);
-    } catch (err: any) {
-      console.error('AI recommendation error', err);
-      setAiError(err?.message || String(err));
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('AI recommendation error:', errorMessage);
+      setAiError(errorMessage);
       setAiProductAlternatives(null);
     } finally {
       setAiLoading(false);
@@ -733,16 +903,16 @@ export default function SustainableConsumption() {
 
       // Universal Receipt Parser - works with any receipt structure
       console.log("Starting universal receipt parsing...");
-      
+
       // Step 1: Find the product section boundaries
-      const itemSectionStart = lines.findIndex((line: string) => 
-        line.toLowerCase().includes('item') || 
+      const itemSectionStart = lines.findIndex((line: string) =>
+        line.toLowerCase().includes('item') ||
         line.toLowerCase().includes('product') ||
         line.toLowerCase().includes('description') ||
         line.toLowerCase().includes('name') // Add "name" as a product section indicator
       );
-      
-      const totalSectionStart = lines.findIndex((line: string, idx: number) => 
+
+      const totalSectionStart = lines.findIndex((line: string, idx: number) =>
         idx > itemSectionStart && (
           line.toLowerCase().includes('total quantity') ||
           line.toLowerCase().includes('gross total') ||
@@ -755,7 +925,7 @@ export default function SustainableConsumption() {
 
       // Step 2: Extract only lines from the product section
       let productSectionLines: string[] = [];
-      
+
       if (itemSectionStart !== -1) {
         const endIndex = totalSectionStart !== -1 ? totalSectionStart : lines.length;
         productSectionLines = lines.slice(itemSectionStart + 1, endIndex);
@@ -770,38 +940,38 @@ export default function SustainableConsumption() {
       const potentialProducts = productSectionLines.filter((line: string) => {
         const lower = line.toLowerCase();
         const trimmed = line.trim();
-        
+
         // Skip obvious non-product lines
         if (
           // Store/location info
           lower.includes('supermarket') || lower.includes('store') ||
           lower.includes('city index') || lower.includes('25b') ||
           lower.includes('address') || lower.includes('phone') || lower.includes('tel') ||
-          
+
           // Receipt metadata and codes
           lower.includes('bill') || lower.includes('waiter') || lower.includes('cashier') ||
           lower.includes('manager') || lower.includes('tin') || lower.includes('osc') ||
           lower.includes('cash') || lower.includes('change') || lower.includes('date') || lower.includes('time') ||
           /^\d{2}\/\d{2}\/\d{4}/.test(trimmed) || // dates
-          
+
           // Totals and calculations
           lower.includes('total') || lower.includes('subtotal') || lower.includes('gross') ||
           lower.includes('vat') || lower.includes('tax') || lower.includes('service') ||
           lower.includes('net amount') || lower.includes('get back') ||
           lower.includes('charges') || lower.includes('discount') ||
-          
+
           // Section headers
           lower === 'name' || lower.includes('qty') || lower.includes('quantity') ||
           lower.includes('price') || lower.includes('amount') ||
-          
+
           // Footer messages
-          lower.includes('thank you') || lower.includes('glad to see') || 
+          lower.includes('thank you') || lower.includes('glad to see') ||
           lower.includes('visit again') || lower.includes('welcome') ||
           lower.includes('modif.ai') ||
-          
+
           // Staff names and codes
           lower.includes('eric') || lower.includes('steer') ||
-          
+
           // Numbers, prices, codes, or very short text
           /^\d+$/.test(trimmed) || // just numbers
           /^\d+\.\d+$/.test(trimmed) || // decimal numbers
@@ -817,13 +987,13 @@ export default function SustainableConsumption() {
         ) {
           return false;
         }
-        
+
         // Only include lines that look like actual product names
         // Must contain letters and be reasonable length
         if (!/[a-zA-Z]/.test(trimmed) || trimmed.length < 3) {
           return false;
         }
-        
+
         return true;
       });
 
@@ -832,11 +1002,11 @@ export default function SustainableConsumption() {
       // Step 4: Extract prices from the price section
       const priceIndex = lines.findIndex((line: string) => line.toLowerCase() === 'price');
       let prices: number[] = [];
-      
+
       if (priceIndex !== -1) {
         // Look for prices after the "price" keyword
         const priceLines = lines.slice(priceIndex + 1);
-        
+
         priceLines.forEach((line: string) => {
           // Match various price formats: $9.20, 330.00, 330,00, etc.
           const pricePatterns = [
@@ -846,7 +1016,7 @@ export default function SustainableConsumption() {
             /^\d{1,4},00$/,        // 330,00 (exact match)
             /^\d{1,4}\.\d{2}$/,    // 170.00 (exact match)
           ];
-          
+
           for (const pattern of pricePatterns) {
             if (pattern.test(line.trim())) {
               let cleanValue = line.trim().replace('$', '').replace(',', '.');
@@ -862,7 +1032,7 @@ export default function SustainableConsumption() {
 
       // Step 5: Extract quantities (look for small numbers that could be quantities)
       let quantities: number[] = [];
-      
+
       // Look for quantity patterns in the receipt
       lines.forEach((line: string) => {
         // Look for standalone small numbers that could be quantities
@@ -873,7 +1043,7 @@ export default function SustainableConsumption() {
           }
         }
       });
-      
+
       console.log("Extracted Prices:", prices);
       console.log("Extracted Quantities:", quantities);
 
@@ -881,12 +1051,12 @@ export default function SustainableConsumption() {
       const productCount = potentialProducts.length;
       const priceCount = prices.length;
       const qtyCount = quantities.length;
-      
+
       console.log(`Found ${productCount} products, ${priceCount} prices, ${qtyCount} quantities`);
 
       // Only process items that have both product name and price
       const itemsToProcess = Math.min(productCount, priceCount);
-      
+
       console.log("Final product matching:");
       for (let i = 0; i < itemsToProcess; i++) {
         const productName = potentialProducts[i].trim();
@@ -894,9 +1064,9 @@ export default function SustainableConsumption() {
         const quantity = quantities[i] || 1; // Use quantity if available, otherwise default to 1
 
         // Additional validation: ensure this is actually a product
-        const isValidProduct = 
-          productName.length > 2 && 
-          price > 0 && 
+        const isValidProduct =
+          productName.length > 2 &&
+          price > 0 &&
           !/^\d+$/.test(productName) && // not just numbers
           !/^[A-Z]{1,3}\d+$/.test(productName) && // not codes like AS515
           /[a-zA-Z]/.test(productName); // contains letters
@@ -918,7 +1088,7 @@ export default function SustainableConsumption() {
               water: footprintPerUnit.water * quantity,
             },
           });
-          
+
           console.log(`✅ Added: "${productName}" → Qty: ${quantity}, Price: ${price}, Category: ${category}`);
         } else {
           console.log(`❌ Skipped: "${productName}" → Not a valid product`);
@@ -959,16 +1129,14 @@ export default function SustainableConsumption() {
   };
 
   return (
-    <div className="grid lg:grid-cols-3 gap-8 p-4">
-      
-
+    <div className="grid lg:grid-cols-3 gap-2 sm:gap-4 lg:gap-6 p-2 sm:p-3 lg:p-4 max-w-full overflow-hidden">
       {/* Main Content */}
-      <div className="lg:col-span-2 space-y-6">
+      <div className="lg:col-span-2 space-y-2 sm:space-y-4">
         {/* Sustainability Score */}
-        <div className="bg-white rounded-2xl p-6 shadow-lg">
-          <h3 className="text-xl font-semibold mb-4">Your Sustainability Score</h3>
-          <div className="flex items-center gap-4">
-            <div className="relative w-24 h-24">
+        <div className="bg-white rounded-md sm:rounded-lg p-3 sm:p-4 shadow">
+          <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Your Sustainability Score</h3>
+          <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24">
               <svg className="w-24 h-24 transform -rotate-90">
                 <circle
                   cx="48"
@@ -1011,22 +1179,22 @@ export default function SustainableConsumption() {
         </div>
 
         {/* Input Method Toggle */}
-        <div className="bg-white rounded-2xl p-6 shadow-lg">
-          <h3 className="text-xl font-semibold mb-4">Add Purchase Data</h3>
-          <div className="flex border rounded-lg overflow-hidden mb-6">
+        <div className="bg-white rounded-md sm:rounded-lg p-2 sm:p-4 shadow">
+          <h3 className="text-base sm:text-lg font-semibold mb-2 sm:mb-3">Add Purchase Data</h3>
+          <div className="flex flex-col sm:flex-row border rounded overflow-hidden mb-2 sm:mb-4">
             <button
-              className={`flex-1 py-2 px-4 transition ${inputMethod === "manual"
-                ? "bg-green-600 text-white"
-                : "bg-gray-100 hover:bg-gray-200"
+              className={`flex-1 py-2 px-3 sm:px-4 transition text-sm sm:text-base ${inputMethod === "manual"
+                  ? "bg-green-600 text-white"
+                  : "bg-gray-100 hover:bg-gray-200"
                 }`}
               onClick={() => setInputMethod("manual")}
             >
               Add Manually
             </button>
             <button
-              className={`flex-1 py-2 px-4 transition ${inputMethod === "receipt"
-                ? "bg-green-600 text-white"
-                : "bg-gray-100 hover:bg-gray-200"
+              className={`flex-1 py-2 px-3 sm:px-4 transition text-sm sm:text-base ${inputMethod === "receipt"
+                  ? "bg-green-600 text-white"
+                  : "bg-gray-100 hover:bg-gray-200"
                 }`}
               onClick={() => setInputMethod("receipt")}
             >
@@ -1044,14 +1212,14 @@ export default function SustainableConsumption() {
                 <div className="relative">
                   <input
                     type="text"
-                    className="w-full p-3 pr-10 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                    className="w-full p-2 sm:p-3 pr-8 sm:pr-10 text-sm sm:text-base border rounded-lg focus:ring-green-500 focus:border-green-500"
                     value={product}
                     onChange={(e) => {
                       const newProduct = e.target.value;
                       // Soft-validate only (no blocking). Trim very long names.
                       const cleaned = newProduct.slice(0, 80);
                       setProduct(cleaned);
-                      
+
                       // Auto-apply recommended category if user hasn't manually overridden
                       if (!isManualCategoryOverride && cleaned.trim()) {
                         const recommendedCategory = detectCategory(cleaned);
@@ -1101,10 +1269,11 @@ export default function SustainableConsumption() {
 
               {/* Category */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="category-select" className="block text-sm font-medium text-gray-700 mb-1">
                   Category
                 </label>
                 <select
+                  id="category-select"
                   value={category}
                   onChange={(e) => {
                     setCategory(e.target.value as Category);
@@ -1123,29 +1292,31 @@ export default function SustainableConsumption() {
               </div>
 
               {/* Quantity & Price */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="quantity-input" className="block text-sm font-medium text-gray-700 mb-1">
                     Quantity
                   </label>
                   <div className="relative">
                     <input
+                      id="quantity-input"
                       type="number"
-                      className="w-full p-3 pr-10 border rounded-lg focus:ring-green-500 focus:border-green-500"
+                      className="w-full p-2 sm:p-3 pr-8 sm:pr-10 text-sm sm:text-base border rounded-lg focus:ring-green-500 focus:border-green-500"
                       value={quantity}
                       min={1}
                       onChange={(e) => setQuantity(Number(e.target.value))}
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">pcs</span>
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs sm:text-sm">pcs</span>
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="price-input" className="block text-sm font-medium text-gray-700 mb-1">
                     Price ($)
                   </label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                     <input
+                      id="price-input"
                       type="number"
                       className="w-full pl-7 p-3 border rounded-lg focus:ring-green-500 focus:border-green-500"
                       value={price}
@@ -1220,54 +1391,12 @@ export default function SustainableConsumption() {
               </div>
             </div>
           )}
-
         </div>
 
-        {recommendations.length > 0 && (
-          <div className="bg-white rounded-2xl p-6 shadow-lg">
-            <h3 className="text-xl font-semibold mb-4">Sustainable Alternatives (Tips)</h3>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {recommendations.map((r) => (
-                <div key={r.key} className="border rounded-xl p-4 bg-green-50/50">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{r.tag}</span>
-                    <span className="text-xs text-green-700">up to {Math.round(r.estimatedReduction * 100)}% lower CO₂</span>
-                  </div>
-                  <div className="font-medium text-green-900">{r.title}</div>
-                  <p className="text-sm text-gray-700 mt-1">{r.details}</p>
-                  <p className="text-xs text-gray-500 mt-2">Based on: <span className="font-medium">{r.basedOnProduct}</span> ({r.category})</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {productAlternatives.length > 0 && (
-          <div className="bg-white rounded-2xl p-6 shadow-lg">
-            <h3 className="text-xl font-semibold mb-4">Sustainable Alternative Products</h3>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {productAlternatives.map((item) => (
-                <div key={item.id} className="border rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{item.badge}</span>
-                    <span className="text-xs text-green-700">{item.estImpactLabel}</span>
-                  </div>
-                  <div className="font-medium">{item.name}</div>
-                  <p className="text-sm text-gray-700 mt-1">{item.description}</p>
-                  <p className="text-xs text-gray-500 mt-2">Because you spent more on <span className="font-medium">{item.category}</span></p>
-                  <div className="mt-2">
-                    <button className="text-xs text-green-700 hover:text-green-800 hover:underline" onClick={() => setFilterCategory(item.category)}>See more in {item.category}</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Filters */}
-        <div className="bg-white rounded-2xl p-6 shadow-lg">
-          <h3 className="text-xl font-semibold mb-4">Filter Purchases</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg sm:rounded-2xl p-4 sm:p-6 shadow-lg">
+          <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Filter Purchases</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {/* Search */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1297,10 +1426,11 @@ export default function SustainableConsumption() {
 
             {/* Category Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="filter-category-select" className="block text-sm font-medium text-gray-700 mb-1">
                 Category
               </label>
               <select
+                id="filter-category-select"
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value as Category | "All")}
                 className="w-full p-3 border rounded-lg focus:ring-green-500 focus:border-green-500 bg-white"
@@ -1318,10 +1448,11 @@ export default function SustainableConsumption() {
 
             {/* Date Range Filter */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="filter-date-range-select" className="block text-sm font-medium text-gray-700 mb-1">
                 Date Range
               </label>
               <select
+                id="filter-date-range-select"
                 value={filterDateRange}
                 onChange={(e) => setFilterDateRange(e.target.value as "all" | "today" | "week" | "month")}
                 className="w-full p-3 border rounded-lg focus:ring-green-500 focus:border-green-500 bg-white"
@@ -1344,9 +1475,9 @@ export default function SustainableConsumption() {
         </div>
 
         {/* Purchases List */}
-        <div className="bg-white rounded-2xl p-6 shadow-lg">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-semibold">Tracked Purchases</h3>
+        <div className="bg-white rounded-md sm:rounded-lg p-2 sm:p-4 shadow">
+          <div className="flex justify-between items-center mb-2 sm:mb-3">
+            <h3 className="text-base sm:text-lg font-semibold">Tracked Purchases</h3>
             {purchases.length > 0 && (
               <button
                 onClick={deleteAllPurchases}
@@ -1359,69 +1490,193 @@ export default function SustainableConsumption() {
           {purchases.length === 0 ? (
             <p className="text-gray-600">No purchases added yet.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full table-auto border-collapse text-left text-sm">
-                <caption className="sr-only">Tracked purchases with environmental footprint</caption>
-                <thead>
-                  <tr>
-                    <th className="border-b border-gray-300 px-4 py-2">Date</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Product</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Category</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Qty</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Price ($)</th>
-                    <th className="border-b border-gray-300 px-4 py-2">CO₂ (kg)</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Plastic (g)</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Water (L)</th>
-                    <th className="border-b border-gray-300 px-4 py-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {purchases.map((p) => (
-                    <tr key={p.id} className="border-b border-gray-200">
-                      <td className="px-4 py-2 text-xs text-gray-600">
-                        {p.timestamp 
-                          ? new Date(p.timestamp).toLocaleDateString('en-US', {
+            <>
+              {/* Mobile Card View */}
+              <div className="block sm:hidden space-y-3">
+                {purchases.map((p) => (
+                  <div key={p.id} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-sm text-gray-900 truncate">{p.product}</h4>
+                        <p className="text-xs text-gray-500 mt-0.5">{p.category}</p>
+                      </div>
+                      <button
+                        onClick={() => deletePurchase(p.id.toString())}
+                        className="text-red-600 hover:text-red-800 hover:bg-red-50 p-1 rounded transition-colors flex-shrink-0 ml-2"
+                        title="Delete purchase"
+                        aria-label="Delete purchase"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-gray-500">Date:</span>
+                        <span className="ml-1 text-gray-700">
+                          {p.timestamp
+                            ? new Date(p.timestamp).toLocaleDateString('en-US', {
                               month: 'short',
                               day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
                             })
-                          : 'N/A'
-                        }
-                      </td>
-                      <td className="px-4 py-2">{p.product}</td>
-                      <td className="px-4 py-2">{p.category}</td>
-                      <td className="px-4 py-2">{p.quantity}</td>
-                      <td className="px-4 py-2">{p.price.toFixed(2)}</td>
-                      <td className="px-4 py-2">{p.footprint.co2.toFixed(2)}</td>
-                      <td className="px-4 py-2">{p.footprint.plastic.toFixed(0)}</td>
-                      <td className="px-4 py-2">{p.footprint.water.toFixed(0)}</td>
-                      <td className="px-4 py-2">
-                        <button
-                          onClick={() => deletePurchase(p.id.toString())}
-                          className="text-red-600 hover:text-red-800 hover:bg-red-50 p-1 rounded transition-colors"
-                          title="Delete purchase"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {/* Totals row */}
-                  <tr className="font-semibold border-t border-gray-300">
-                    <td className="px-4 py-2" colSpan={5}>Total</td>
-                    <td className="px-4 py-2">{totalFootprint.co2.toFixed(2)}</td>
-                    <td className="px-4 py-2">{totalFootprint.plastic.toFixed(0)}</td>
-                    <td className="px-4 py-2">{totalFootprint.water.toFixed(0)}</td>
-                    <td className="px-4 py-2"></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                            : 'N/A'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Qty:</span>
+                        <span className="ml-1 text-gray-700">{p.quantity}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Price:</span>
+                        <span className="ml-1 text-gray-700">${p.price.toFixed(2)}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">CO₂:</span>
+                        <span className="ml-1 text-gray-700">{p.footprint.co2.toFixed(2)} kg</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Plastic:</span>
+                        <span className="ml-1 text-gray-700">{p.footprint.plastic.toFixed(0)} g</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">Water:</span>
+                        <span className="ml-1 text-gray-700">{p.footprint.water.toFixed(0)} L</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {/* Mobile Totals Card */}
+                <div className="bg-green-50 rounded-lg p-3 border border-green-200">
+                  <h4 className="font-semibold text-sm text-gray-900 mb-2">Total Environmental Impact</h4>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <span className="text-gray-600 block">CO₂</span>
+                      <span className="text-gray-900 font-semibold">{totalFootprint.co2.toFixed(2)} kg</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600 block">Plastic</span>
+                      <span className="text-gray-900 font-semibold">{totalFootprint.plastic.toFixed(0)} g</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600 block">Water</span>
+                      <span className="text-gray-900 font-semibold">{totalFootprint.water.toFixed(0)} L</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Desktop Table View */}
+              <div className="hidden sm:block overflow-x-auto -mx-4 sm:mx-0">
+                <div className="inline-block min-w-full align-middle">
+                  <table className="min-w-full divide-y divide-gray-300 text-sm">
+                    <caption className="sr-only">Tracked purchases with environmental footprint</caption>
+                    <thead>
+                      <tr className="text-xs sm:text-sm">
+                        <th scope="col" className="whitespace-nowrap px-1.5 sm:px-3 py-2 text-left text-gray-900 font-medium">Date</th>
+                        <th scope="col" className="whitespace-nowrap px-1.5 sm:px-3 py-2 text-left text-gray-900 font-medium">Product</th>
+                        <th scope="col" className="whitespace-nowrap px-1.5 sm:px-3 py-2 text-left text-gray-900 font-medium">Category</th>
+                        <th scope="col" className="whitespace-nowrap px-1.5 sm:px-3 py-2 text-left text-gray-900 font-medium">Qty</th>
+                        <th scope="col" className="whitespace-nowrap px-1.5 sm:px-3 py-2 text-left text-gray-900 font-medium">Price ($)</th>
+                        <th scope="col" className="whitespace-nowrap px-2 sm:px-4 py-3.5 text-left text-gray-900 font-medium">CO₂ (kg)</th>
+                        <th scope="col" className="whitespace-nowrap px-2 sm:px-4 py-3.5 text-left text-gray-900 font-medium">Plastic (g)</th>
+                        <th scope="col" className="whitespace-nowrap px-2 sm:px-4 py-3.5 text-left text-gray-900 font-medium">Water (L)</th>
+                        <th scope="col" className="whitespace-nowrap px-2 sm:px-4 py-3.5 text-left text-gray-900 font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchases.map((p) => (
+                        <tr key={p.id} className="border-b border-gray-200">
+                          <td className="whitespace-nowrap px-2 sm:px-4 py-2 text-xs sm:text-sm text-gray-600">
+                            {p.timestamp
+                              ? new Date(p.timestamp).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                              })
+                              : 'N/A'
+                            }
+                          </td>
+                          <td className="truncate max-w-[120px] sm:max-w-none px-2 sm:px-4 py-2 text-sm">{p.product}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.category}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.quantity}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.price.toFixed(2)}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.footprint.co2.toFixed(2)}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.footprint.plastic.toFixed(0)}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">{p.footprint.water.toFixed(0)}</td>
+                          <td className="px-2 sm:px-4 py-2 text-sm">
+                            <button
+                              onClick={() => deletePurchase(p.id.toString())}
+                              className="text-red-600 hover:text-red-800 hover:bg-red-50 p-1 rounded transition-colors"
+                              title="Delete purchase"
+                              aria-label="Delete purchase"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Totals row */}
+                      <tr className="font-semibold border-t border-gray-300">
+                        <td className="px-4 py-2" colSpan={4}>Total</td>
+                        <td className="px-4 py-2"></td>
+                        <td className="px-4 py-2">{totalFootprint.co2.toFixed(2)}</td>
+                        <td className="px-4 py-2">{totalFootprint.plastic.toFixed(0)}</td>
+                        <td className="px-4 py-2">{totalFootprint.water.toFixed(0)}</td>
+                        <td className="px-4 py-2"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
           )}
         </div>
+
+        {recommendations.length > 0 && (
+          <div className="bg-white rounded-md sm:rounded-lg p-2 sm:p-4 shadow">
+            <h3 className="text-base sm:text-lg font-semibold mb-2 sm:mb-3">Sustainable Alternatives (Tips)</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+              {recommendations.map((r) => (
+                <div key={r.key} className="border rounded-lg p-2 sm:p-4 bg-green-50/50">
+                  <div className="flex flex-col xs:flex-row items-start xs:items-center xs:justify-between gap-1 xs:gap-0 mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">{r.tag}</span>
+                    <span className="text-xs text-green-700 whitespace-nowrap">up to {Math.round(r.estimatedReduction * 100)}% lower CO₂</span>
+                  </div>
+                  <div className="font-medium text-green-900">{r.title}</div>
+                  <p className="text-sm text-gray-700 mt-1">{r.details}</p>
+                  <p className="text-xs text-gray-500 mt-2">Based on: <span className="font-medium">{r.basedOnProduct}</span> ({r.category})</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(aiProductAlternatives?.length || 0 || productAlternatives.length > 0) && (
+          <div className="bg-white rounded-md sm:rounded-lg p-2 sm:p-4 shadow">
+            <div className="flex items-center justify-between mb-2 sm:mb-3">
+              <h3 className="text-base sm:text-lg font-semibold">Sustainable Alternative Products</h3>
+              {aiLoading && <span className="text-xs text-gray-500">Updating recommendations...</span>}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+              {(aiProductAlternatives || productAlternatives).map((item) => (
+                <div key={item.id} className="border rounded-lg p-2 sm:p-4">
+                  <div className="flex flex-col xs:flex-row items-start xs:items-center gap-1 xs:gap-2 mb-1">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 whitespace-nowrap">{item.badge}</span>
+                    <span className="text-xs text-green-700">{item.estImpactLabel}</span>
+                  </div>
+                  <div className="font-medium">{item.name}</div>
+                  <p className="text-sm text-gray-700 mt-1">{item.description}</p>
+                  <p className="text-xs text-gray-500 mt-2">Because you spent more on <span className="font-medium">{item.category}</span></p>
+                  <div className="mt-2">
+                    <button className="text-xs text-green-700 hover:text-green-800 hover:underline" onClick={() => setFilterCategory(item.category)}>See more in {item.category}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

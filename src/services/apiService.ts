@@ -3,7 +3,9 @@ const API_KEYS = {
   WEATHER: import.meta.env.VITE_OPENWEATHER_API_KEY || '0bd84edc72a25d08efa9ec05c698ec80',
   FINANCIAL: import.meta.env.VITE_FINANCIAL_API_KEY || 'KZVDXAKNAWP4AR37',
   OPENAI: import.meta.env.VITE_ECOVEST_OPENAI_API_KEY || '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',
-  NEWS: import.meta.env.VITE_NEWS_API_KEY || '9864287ccc1145058a2548d0ff763db2'
+  NEWS: import.meta.env.VITE_NEWS_API_KEY || '9864287ccc1145058a2548d0ff763db2',
+  OPENAI_PRODUCT: import.meta.env.VITE_OPENAI_API_KEY || '',
+  GEMINI: import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GOOGLE_GEMINI_API_KEY || ''
 };
 
 // Weather API Service
@@ -301,20 +303,200 @@ export class NewsService {
   }
 }
 
+// Open Food Facts Service for product sustainability data
+export class OpenFoodFactsService {
+  private static baseUrl = 'https://world.openfoodfacts.org/api/v2';
+
+  static async searchProduct(productName: string) {
+    try {
+      // Clean product name for search
+      const searchQuery = encodeURIComponent(productName.trim().toLowerCase());
+      const response = await fetch(
+        `${this.baseUrl}/search?search_terms=${searchQuery}&page_size=5&fields=product_name,ecoscore_grade,ecoscore_score,packaging_tags,labels_tags,image_url,code`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Open Food Facts API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.products || data.products.length === 0) {
+        return null;
+      }
+
+      // Return the best match (first product)
+      const product = data.products[0];
+      return {
+        name: product.product_name || productName,
+        ecoscore: {
+          grade: product.ecoscore_grade || 'unknown',
+          score: product.ecoscore_score || null
+        },
+        packaging: product.packaging_tags || [],
+        labels: product.labels_tags || [],
+        imageUrl: product.image_url || null,
+        barcode: product.code || null
+      };
+    } catch (error) {
+      console.error('Open Food Facts API error:', error);
+      return null;
+    }
+  }
+
+  static async getBetterAlternatives(productName: string, category: string) {
+    try {
+      // Search for similar products in the same category
+      const searchQuery = encodeURIComponent(`${category} ${productName}`);
+      const response = await fetch(
+        `${this.baseUrl}/search?search_terms=${searchQuery}&page_size=10&fields=product_name,ecoscore_grade,ecoscore_score,packaging_tags,labels_tags,image_url,code&sort_by=ecoscore_score`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Open Food Facts API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.products || data.products.length === 0) {
+        return [];
+      }
+
+      // Filter products with better ecoscore (A or B grades) and return top 3-5
+      const alternatives = data.products
+        .filter((p: any) => {
+          const grade = p.ecoscore_grade?.toUpperCase();
+          return grade && (grade === 'A' || grade === 'B');
+        })
+        .slice(0, 5)
+        .map((p: any) => ({
+          name: p.product_name || 'Unknown',
+          ecoscore: {
+            grade: p.ecoscore_grade || 'unknown',
+            score: p.ecoscore_score || null
+          },
+          packaging: p.packaging_tags || [],
+          labels: p.labels_tags || [],
+          imageUrl: p.image_url || null,
+          barcode: p.code || null
+        }));
+
+      return alternatives;
+    } catch (error) {
+      console.error('Open Food Facts alternatives error:', error);
+      return [];
+    }
+  }
+}
+
 // OpenAI Service for EcoVest AI
 export class AIService {
   private static baseUrl = 'https://api.openai.com/v1';
+  private static geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-  static async getChatCompletion(messages: Array<{role: string, content: string}>) {
+  // Gemini API call
+  private static async getGeminiCompletion(messages: Array<{role: string, content: string}>) {
     try {
+      const apiKey = API_KEYS.GEMINI;
+      if (!apiKey) {
+        throw new Error('Gemini API key not configured');
+      }
+
+      const systemPrompt = `You are EcoVest, an AI advisor specializing in sustainable and ESG investments. 
+You provide expert analysis on environmental, social, and governance factors in investment decisions.
+Always consider climate risks, policy impacts, and long-term sustainability in your recommendations.
+Be concise but informative, and always prioritize factual, data-driven insights.`;
+
+      // Extract user message (last message should be user)
+      const userMessage = messages.find(m => m.role === 'user') || messages[messages.length - 1];
+      const userContent = userMessage?.content || '';
+      
+      // Combine system prompt with user message
+      const fullPrompt = `${systemPrompt}\n\n${userContent}`;
+
+      // Use gemini-1.5-flash (faster) or try gemini-1.5-pro if needed
+      const model = 'gemini-1.5-flash';
+      const url = `${this.geminiBaseUrl}/${model}:generateContent?key=${apiKey}`;
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: fullPrompt }]
+          }],
+          generationConfig: {
+            maxOutputTokens: 500,
+            temperature: 0.7,
+          }
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Gemini API error: ${response.status} - ${JSON.stringify(errorData)}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+        return data.candidates[0].content.parts[0].text;
+      }
+      
+      throw new Error('Invalid response format from Gemini API');
+    } catch (error) {
+      console.error('Gemini API error:', error);
+      throw error;
+    }
+  }
+
+  // Helper to check if a key is a valid OpenAI key (starts with sk-)
+  private static isValidOpenAIKey(key: string | undefined): boolean {
+    if (!key) return false;
+    // OpenAI keys start with "sk-"
+    return key.trim().startsWith('sk-');
+  }
+
+  // Helper to check if a key is a valid Gemini key (starts with AIza)
+  private static isValidGeminiKey(key: string | undefined): boolean {
+    if (!key) return false;
+    // Gemini keys start with "AIza"
+    return key.trim().startsWith('AIza');
+  }
+
+  // OpenAI API call
+  private static async getOpenAICompletion(messages: Array<{role: string, content: string}>, useProductKey = false) {
+    try {
+      let apiKey: string | undefined;
+      
+      if (useProductKey) {
+        apiKey = API_KEYS.OPENAI_PRODUCT;
+        // If product key is set but looks like Gemini key, don't use it
+        if (apiKey && this.isValidGeminiKey(apiKey)) {
+          apiKey = undefined;
+        }
+      }
+      
+      // If no valid product key, try main OpenAI key
+      if (!apiKey || !this.isValidOpenAIKey(apiKey)) {
+        apiKey = API_KEYS.OPENAI;
+      }
+      
+      // Final check - make sure it's a valid OpenAI key
+      if (!apiKey || !this.isValidOpenAIKey(apiKey)) {
+        throw new Error('OpenAI API key not configured or invalid');
+      }
+
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_KEYS.OPENAI}`
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: 'gpt-4',
+          model: 'gpt-3.5-turbo', // Using gpt-3.5-turbo as it's more accessible than gpt-4
           messages: [
             {
               role: 'system',
@@ -331,15 +513,57 @@ export class AIService {
       });
 
       if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`OpenAI API error: ${response.status} - ${JSON.stringify(errorData)}`);
       }
 
       const data = await response.json();
       return data.choices[0].message.content;
     } catch (error) {
       console.error('OpenAI API error:', error);
-      return 'I apologize, but I\'m currently unable to process your request. Please try again later.';
+      throw error;
     }
+  }
+
+  // Main method that tries Gemini first, then falls back to OpenAI
+  static async getChatCompletion(messages: Array<{role: string, content: string}>, useProductKey = false) {
+    // Try Gemini first if API key is available and valid
+    if (API_KEYS.GEMINI && this.isValidGeminiKey(API_KEYS.GEMINI)) {
+      try {
+        return await this.getGeminiCompletion(messages);
+      } catch (geminiError) {
+        console.warn('Gemini API failed, falling back to OpenAI:', geminiError);
+        // Continue to OpenAI fallback
+      }
+    }
+
+    // Fallback to OpenAI if Gemini failed or wasn't available
+    const hasValidOpenAIKey = useProductKey 
+      ? this.isValidOpenAIKey(API_KEYS.OPENAI_PRODUCT) 
+      : this.isValidOpenAIKey(API_KEYS.OPENAI);
+    
+    if (hasValidOpenAIKey) {
+      try {
+        return await this.getOpenAICompletion(messages, useProductKey);
+      } catch (openAiError) {
+        console.error('OpenAI API also failed:', openAiError);
+        // If both APIs fail, return error message
+        return 'I apologize, but I\'m currently unable to process your request. Both Gemini and OpenAI APIs failed. Please check your API keys and try again later.';
+      }
+    }
+
+    // If neither API has a valid key configured
+    if (!API_KEYS.GEMINI && !hasValidOpenAIKey) {
+      return 'I apologize, but I\'m currently unable to process your request. Please ensure you have a valid API key configured (VITE_GEMINI_API_KEY or VITE_OPENAI_API_KEY).';
+    }
+
+    // If Gemini key exists but is invalid, and no OpenAI key
+    if (API_KEYS.GEMINI && !this.isValidGeminiKey(API_KEYS.GEMINI) && !hasValidOpenAIKey) {
+      return 'I apologize, but I\'m currently unable to process your request. The Gemini API key appears to be invalid. Please check your VITE_GEMINI_API_KEY or configure VITE_OPENAI_API_KEY.';
+    }
+
+    // Final fallback
+    return 'I apologize, but I\'m currently unable to process your request. Please try again later.';
   }
 
   static async analyzeInvestmentOpportunity(investment: any) {
@@ -387,6 +611,68 @@ export class AIService {
     4. Emerging opportunities`;
 
     return this.getChatCompletion([{ role: 'user', content: prompt }]);
+  }
+
+  static async generateGreenerAlternatives(productName: string, category: string, currentProductData: any, alternatives: any[]) {
+    try {
+      const currentEcoscore = currentProductData?.ecoscore?.grade || 'unknown';
+      const currentPackaging = currentProductData?.packaging?.join(', ') || 'unknown';
+      const currentLabels = currentProductData?.labels?.join(', ') || 'none';
+
+      const alternativesSummary = alternatives.map((alt, idx) => 
+        `${idx + 1}. ${alt.name} (Eco-Score: ${alt.ecoscore?.grade || 'N/A'}, Packaging: ${alt.packaging?.join(', ') || 'N/A'}, Labels: ${alt.labels?.join(', ') || 'N/A'})`
+      ).join('\n');
+
+      const prompt = `You are a sustainability expert helping consumers make greener purchasing decisions.
+
+Current Product: ${productName}
+Category: ${category}
+Current Eco-Score: ${currentEcoscore}
+Current Packaging: ${currentPackaging}
+Current Labels: ${currentLabels}
+
+Available Greener Alternatives:
+${alternativesSummary}
+
+Generate a human-readable recommendation (2-3 paragraphs) that:
+1. Explains why these alternatives are more sustainable
+2. Compares Eco-Scores, packaging materials, and certification labels
+3. Provides specific, actionable advice on choosing the best alternative
+4. Highlights the environmental benefits (CO2 reduction, plastic reduction, water savings)
+
+Format your response as clear, friendly advice that empowers the consumer to make informed choices.`;
+
+      return this.getChatCompletion([{ role: 'user', content: prompt }], true);
+    } catch (error) {
+      console.error('Error generating greener alternatives:', error);
+      return 'Unable to generate recommendations at this time. Please try again later.';
+    }
+  }
+
+  static async generateProductRecommendations(purchases: Array<{product: string, category: string}>) {
+    try {
+      const productList = purchases.map((p, idx) => 
+        `${idx + 1}. ${p.product} (${p.category})`
+      ).join('\n');
+
+      const prompt = `Analyze this list of recent purchases and provide personalized sustainability recommendations:
+
+Purchases:
+${productList}
+
+Generate comprehensive, actionable recommendations (3-4 paragraphs) that:
+1. Identify patterns in the user's purchasing habits
+2. Suggest specific greener alternatives for key products
+3. Provide tips for reducing environmental impact in their shopping
+4. Highlight categories where they could make the biggest sustainability improvements
+
+Be specific, practical, and encouraging. Focus on realistic changes that fit different lifestyles.`;
+
+      return this.getChatCompletion([{ role: 'user', content: prompt }], true);
+    } catch (error) {
+      console.error('Error generating product recommendations:', error);
+      return 'Unable to generate recommendations at this time. Please try again later.';
+    }
   }
 }
 

@@ -1,5 +1,4 @@
 import { ChangeEvent, useEffect, useState, useMemo, useRef } from "react";
-import ChatWidget from "../shared/ChatWidget";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api"; // adjust path as per your setup
 import { OpenFoodFactsService, AIService } from "../../services/apiService";

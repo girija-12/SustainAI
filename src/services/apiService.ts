@@ -2,7 +2,7 @@
 const API_KEYS = {
   WEATHER: import.meta.env.VITE_OPENWEATHER_API_KEY || '0bd84edc72a25d08efa9ec05c698ec80',
   FINANCIAL: import.meta.env.VITE_FINANCIAL_API_KEY || 'KZVDXAKNAWP4AR37',
-  OPENAI: import.meta.env.VITE_ECOVEST_OPENAI_API_KEY || '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',
+  OPENAI: import.meta.env.VITE_ECOVEST_OPENAI_API_KEY || '',
   NEWS: import.meta.env.VITE_NEWS_API_KEY || '9864287ccc1145058a2548d0ff763db2',
   OPENAI_PRODUCT: import.meta.env.VITE_OPENAI_API_KEY || '',
   GEMINI: import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_GOOGLE_GEMINI_API_KEY || ''
